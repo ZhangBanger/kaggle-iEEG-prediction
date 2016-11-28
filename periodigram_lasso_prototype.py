@@ -51,9 +51,9 @@ def read_periodograms(file_path, batch_size=1):
 def train_model_l1(l1penalty):
     print('Build model...')
     model = Sequential()
-    model.add(Dense(1, input_shape=(input_dim,), W_regularizer=l1l2(l1=l1penalty, l2=0)))
+    model.add(Dense(1, input_shape=(input_dim,), W_regularizer=l1l2(l1=l1penalty, l2=l1penalty)))
     model.add(Activation('sigmoid'))
-    adam_optimizer = Adam(lr=0.01)
+    adam_optimizer = Adam(lr=0.01, decay=0.99)
 
     # try using different optimizers and different optimizer configs
     model.compile(loss='binary_crossentropy',
@@ -69,8 +69,8 @@ def train_model_l1(l1penalty):
 
 data_dir = os.path.expanduser("~/data/seizure-prediction")
 hdf5_path = os.path.join(data_dir, "periodograms.h5")
-BATCH_SIZE = 128
-samples_per_epoch = 1024
+BATCH_SIZE = 256
+samples_per_epoch = 256 * 24
 "remove cycle in the real set"
 gen = cycle(read_periodograms(hdf5_path, batch_size=BATCH_SIZE))
 ####################################################

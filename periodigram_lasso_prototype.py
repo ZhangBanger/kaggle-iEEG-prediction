@@ -35,12 +35,11 @@ def get_label(infile):
 def read_periodograms(folder, batch_size=1):
     x_batch = []
     y_batch = []
-    for idx, file_name in enumerate(os.listdir(folder)):
+    for idx, file_name in enumerate(cycle(os.listdir(folder))):
         yy = get_label(file_name)
         xx = loadmat(os.path.join(folder, file_name))['data']
         x_batch.append(xx.T.ravel())
         y_batch.append(yy)
-        print("file idx ", idx)
         if (idx + 1) % batch_size == 0:
             yield np.vstack(x_batch), np.vstack(y_batch)
             x_batch = []
@@ -48,7 +47,7 @@ def read_periodograms(folder, batch_size=1):
 
 
 ############################################################################
-def train_model_l1(l1penalty):
+def train_model_l1(l1penalty, generator):
     print('Build model...')
     model = Sequential()
     model.add(Dense(1, input_shape=(input_dim,), W_regularizer=l1l2(l1=l1penalty, l2=l1penalty)))
@@ -61,7 +60,7 @@ def train_model_l1(l1penalty):
                   metrics=['accuracy'])
 
     ############################################################################
-    model.fit_generator(gen, nb_worker=1,
+    model.fit_generator(generator=generator, nb_worker=1,
                         nb_epoch=10, samples_per_epoch=samples_per_epoch)
     ####################################################
     print("MODEL DONE")
@@ -72,8 +71,6 @@ data_dir = os.path.expanduser("~/data/seizure-prediction")
 periodograms_folder = os.path.join(data_dir, "periodograms")
 BATCH_SIZE = 128
 samples_per_epoch = 128 * 48
-"remove cycle in the real set"
-gen = cycle(read_periodograms(periodograms_folder, batch_size=BATCH_SIZE))
 ####################################################
 
 step = 0.5
@@ -81,7 +78,7 @@ l1_penalties = np.array(10.0 ** np.arange(-4, -1, step))
 
 for l1_penalty in l1_penalties:
     print("l1penalty=", l1_penalty)
-    penalized_model = train_model_l1(l1_penalty)
+    penalized_model = train_model_l1(l1_penalty, read_periodograms(periodograms_folder, batch_size=BATCH_SIZE))
     la = penalized_model.layers[0]
     W = np.reshape(la.get_weights()[0], (-1, 16))
     pd.DataFrame(W, columns=np.arange(inp_channels)). \

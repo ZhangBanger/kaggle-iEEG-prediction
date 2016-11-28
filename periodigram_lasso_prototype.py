@@ -69,8 +69,8 @@ def train_model_l1(l1penalty):
 
 data_dir = os.path.expanduser("~/data/seizure-prediction")
 hdf5_path = os.path.join(data_dir, "periodograms.h5")
-BATCH_SIZE = 256
-samples_per_epoch = 256 * 24
+BATCH_SIZE = 128
+samples_per_epoch = 128 * 48
 "remove cycle in the real set"
 gen = cycle(read_periodograms(hdf5_path, batch_size=BATCH_SIZE))
 ####################################################

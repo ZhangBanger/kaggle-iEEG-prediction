@@ -2,9 +2,8 @@ import os
 
 import numpy as np
 import six
-from pandas import HDFStore, DataFrame
 from scipy import signal
-from scipy.io import loadmat
+from scipy.io import loadmat, savemat
 
 
 def mat_to_data(path):
@@ -36,19 +35,11 @@ def periodogram_gen_one_name(folder):
 
 data_dir = os.path.expanduser("~/data/seizure-prediction")
 
-h5filename = os.path.join(data_dir, "periodograms.h5")
+periodogram_dir = os.path.join(data_dir, "periodograms")
 
-# Save periodograms in HDF5 file
-with HDFStore(h5filename) as h5:
-    for xx, yy, ff in periodogram_gen_one_name(data_dir):
-        print(ff, xx.shape, yy.shape)
-        dfx = DataFrame(xx)
-        dfx.name = yy
-        h5[ff] = dfx
+if not os.path.exists(periodogram_dir):
+    os.mkdir(periodogram_dir)
 
-# Read back periodograms from HDF5 file to be safe
-h5 = HDFStore(h5filename)
-print("=====================")
-print("keys:")
-print(h5.keys())
-h5.close()
+for xx, yy, ff in periodogram_gen_one_name(data_dir):
+    print(ff, xx.shape, yy.shape)
+    savemat(os.path.join(periodogram_dir, ff), {"data": xx})

@@ -1,5 +1,5 @@
-from itertools import cycle
 import os
+from itertools import cycle
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ from keras.models import Sequential
 from keras.objectives import mean_squared_error
 from keras.optimizers import Adam
 from keras.regularizers import l1l2
-from pandas import HDFStore
+from scipy.io import loadmat
 
 # create the model
 inp_channels = 16
@@ -32,16 +32,16 @@ def get_label(infile):
     return infile.split("/")[-1].split(".")[0][-1] == "0"
 
 
-def read_periodograms(file_path, batch_size=1):
+def read_periodograms(folder, batch_size=1):
     x_batch = []
     y_batch = []
-    h5 = HDFStore(file_path)
-    for nn, kk in enumerate(h5.keys()):
-        yy = get_label(kk)
-        xx = h5[kk].as_matrix()
+    for idx, file_name in enumerate(os.listdir(folder)):
+        yy = get_label(file_name)
+        xx = loadmat(os.path.join(folder, file_name))['data']
         x_batch.append(xx.T.ravel())
         y_batch.append(yy)
-        if (nn + 1) % batch_size == 0:
+        print("file idx ", idx)
+        if (idx + 1) % batch_size == 0:
             yield np.vstack(x_batch), np.vstack(y_batch)
             x_batch = []
             y_batch = []
@@ -67,12 +67,13 @@ def train_model_l1(l1penalty):
     print("MODEL DONE")
     return model
 
+
 data_dir = os.path.expanduser("~/data/seizure-prediction")
-hdf5_path = os.path.join(data_dir, "periodograms.h5")
+periodograms_folder = os.path.join(data_dir, "periodograms")
 BATCH_SIZE = 128
 samples_per_epoch = 128 * 48
 "remove cycle in the real set"
-gen = cycle(read_periodograms(hdf5_path, batch_size=BATCH_SIZE))
+gen = cycle(read_periodograms(periodograms_folder, batch_size=BATCH_SIZE))
 ####################################################
 
 step = 0.5

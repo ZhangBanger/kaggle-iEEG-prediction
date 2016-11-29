@@ -1,5 +1,4 @@
 import os
-import sqlite3
 
 import numpy as np
 import six
@@ -59,36 +58,3 @@ data_dir = os.path.expanduser("~/data/seizure-prediction")
 
 segment_generator = generate_segment(data_dir)
 sample_generator = generate_sample(segment_gen=segment_generator)
-
-# Time to save to DB!
-db_name = "%s_piece_%u.db" % (TABLE_NAME, WINDOW_SIZE)
-db_path = os.path.join(data_dir, db_name)
-
-print("Saving DB to ", db_path)
-
-with sqlite3.connect(db_path) as conn:
-    cursor = conn.cursor()
-
-    print("PURGING")
-    drop_table_query = "DROP TABLE IF EXISTS %s" % TABLE_NAME
-    cursor.execute(drop_table_query)
-
-    print("INITIALIZING")
-    create_table_query = """CREATE TABLE IF NOT EXISTS %s (
-            id INT PRIMARY KEY,
-            label INT,
-            data BLOB,
-            individual INT,
-            segment INT
-            )""" % TABLE_NAME
-    cursor.execute(create_table_query)
-
-    insert_query = "INSERT INTO %s (id, label, data, individual, segment) VALUES (?,?,?,?,?)" % TABLE_NAME
-
-    print("INSERTING SAMPLES")
-    for idx, (x, y, meta) in enumerate(sample_generator):
-        label = bool(y)
-        blob = sqlite3.Binary(x.tobytes())
-        cursor.execute(insert_query, (idx, label, blob, meta[0], meta[1]))
-        if idx % 100 == 0:
-            print("Finished %i samples, currently on %s - %s" % (idx, meta[0], meta[1]))

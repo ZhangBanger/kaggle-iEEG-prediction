@@ -1,4 +1,5 @@
 import os
+from itertools import cycle
 
 import numpy as np
 import six
@@ -28,7 +29,7 @@ def get_label(infile):
 
 
 def generate_segment(folder):
-    file_paths = list(filter(lambda x: x.endswith(".mat"), os.listdir(folder)))
+    file_paths = cycle(filter(lambda x: x.endswith(".mat"), os.listdir(folder)))
     for file_path in file_paths:
         try:
             infile = os.path.join(folder, file_path)
@@ -58,3 +59,9 @@ data_dir = os.path.expanduser("~/data/seizure-prediction")
 
 segment_generator = generate_segment(data_dir)
 sample_generator = generate_sample(segment_gen=segment_generator)
+
+if __name__ == '__main__':
+    for idx, (x, y, meta) in enumerate(sample_generator):
+        if idx % 1000 == 0:
+           print("Processing record ", idx)
+           print(x, y, meta)

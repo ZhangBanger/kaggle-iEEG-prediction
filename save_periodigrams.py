@@ -20,7 +20,7 @@ def get_label(infile):
     return infile.split(".")[-2][-1] == "0"
 
 
-def periodogram_gen_one_name(folder):
+def generate_periodograms(folder):
     file_paths = list(filter(lambda x: x.endswith(".mat"), os.listdir(folder)))
     for file_path in file_paths:
         try:
@@ -40,6 +40,6 @@ periodogram_dir = os.path.join(data_dir, "periodograms")
 if not os.path.exists(periodogram_dir):
     os.mkdir(periodogram_dir)
 
-for xx, yy, ff in periodogram_gen_one_name(data_dir):
+for xx, yy, ff in generate_periodograms(data_dir):
     print(ff, xx.shape, yy.shape)
     savemat(os.path.join(periodogram_dir, ff), {"data": xx})

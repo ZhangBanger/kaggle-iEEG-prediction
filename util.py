@@ -13,7 +13,7 @@ def subsample(x, channels, rate):
     x_flatten = x.reshape(-1)
     x_convolve = np.convolve(x_flatten, gauss_kern_1d(2 / 3 * rate), mode="same")
     x_subsample = x_convolve[::rate]
-    return x_subsample.reshape(channels, -1)
+    return x_subsample.reshape(-1, channels)
 
 
 def normalize(x):

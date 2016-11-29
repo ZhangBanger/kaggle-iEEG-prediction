@@ -25,7 +25,7 @@ def mat_to_data(path):
 
 
 def get_label(infile):
-    return infile.split(".")[-2][-1] == "0"
+    return infile.split(".")[-2][-1] == "1"
 
 
 def generate_segment(folder):

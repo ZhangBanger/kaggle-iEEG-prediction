@@ -9,6 +9,8 @@ from tensorflow.python.ops import control_flow_ops
 from preprocess import from_example_proto
 from util import weight_variable, bias_variable, variable_summaries
 
+data_dir = "~/data/seizure-prediction/preprocessed"
+
 NUM_EPOCHS = 10
 BATCH_SIZE = 128
 READ_THREADS = 32
@@ -29,7 +31,6 @@ epsilon_bn = 0.001
 
 keep_prob = tf.placeholder(tf.float32)
 
-
 def read_and_decode(filename_queue, shape):
     reader = tf.TFRecordReader()
     _, serialized_example = reader.read(filename_queue)
@@ -38,8 +39,9 @@ def read_and_decode(filename_queue, shape):
     return example, label
 
 
-def input_pipeline(batch_size=BATCH_SIZE, read_threads=READ_THREADS, train=True):
-    data_dir = os.path.expanduser("~/data/seizure-prediction/preprocessed")
+def input_pipeline(batch_size=BATCH_SIZE, read_threads=READ_THREADS, train=True, 
+                    data_dir = "~/data/seizure-prediction/preprocessed"):
+    data_dir = os.path.expanduser(data_dir)
 
     file_suffix = ".train" if train else ".valid"
     filename_list = list(
@@ -127,9 +129,8 @@ def optimize(loss_op):
     global_step = tf.Variable(0, name='global_step', trainable=False)
     return optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
-
 # Set up training pipeline
-example_batch, label_batch = input_pipeline(batch_size=BATCH_SIZE, train=True)
+example_batch, label_batch = input_pipeline(batch_size=BATCH_SIZE, train=True, data_dir=data_dir)
 train_logits = inference(example_batch)
 train_loss = loss(train_logits, label_batch)
 train_step = optimize(train_loss)

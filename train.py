@@ -115,11 +115,11 @@ def loss(logits, y_):
 
     "add batch norm"
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    #if update_ops:
-    #    updates = tf.group(*update_ops)
-    #    return control_flow_ops.with_dependencies([updates], cross_entropy)
-    #else:
-    return cross_entropy
+    if update_ops:
+        updates = tf.group(*update_ops)
+        return control_flow_ops.with_dependencies([updates], cross_entropy)
+    else:
+        return cross_entropy
 
 
 def optimize(loss_op):

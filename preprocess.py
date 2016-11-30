@@ -46,6 +46,17 @@ def to_example_proto(x, label):
     )
 
 
+def from_example_proto(serialized_example):
+    return tf.parse_single_example(
+        serialized_example,
+        # Defaults are not specified since both keys are required.
+        features={
+            'data': tf.FixedLenFeature([], tf.float32),
+            'shape': tf.FixedLenFeature([2], tf.int64),
+            'label': tf.FixedLenFeature([], tf.float64),
+        })
+
+
 def write_segments(data_root):
     raw_folder = os.path.join(data_root, "raw")
     file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))

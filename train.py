@@ -3,6 +3,8 @@ import tensorflow as tf
 
 from preprocess import WINDOW_SIZE, CHANNELS
 from util import weight_variable, bias_variable
+from tensorflow.contrib.layers.python.layers import batch_norm
+from tensorflow.python.ops import control_flow_ops
 
 BATCH_SIZE = 128
 WINDOW_SIZE = 100
@@ -14,9 +16,11 @@ CHANNELS_L3 = 2
 
 # dim order:   x, y, c_in, c_out
 maxpool_ksize = [1, 2, 4, 1]
-KERNEL2 = [30, 2, 1, CHANNELS_L2]
+KERNEL2 = [32, 2, 1, CHANNELS_L2]
 KERNEL3 = [8, 4, CHANNELS_L2, CHANNELS_L3]
-
+scale_bn = False
+decay_bn = 0.999
+epsilon_bn = 0.001
 sess = tf.Session()
 
 x = tf.placeholder(tf.float32, shape=[None, WINDOW_SIZE, CHANNELS])
@@ -28,6 +32,8 @@ with tf.variable_scope("layer1"):
     filter_weights = weight_variable([1, CHANNELS, CHANNELS_L1], name="weights")
     feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
     print("layer1/feature_map", feature_map.get_shape())
+    feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
+                             epsilon=epsilon_bn, activation_fn=None)
     activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
     activation = tf.nn.dropout(activation, keep_prob=keep_prob)
     activation = tf.reshape(activation, [BATCH_SIZE,  CHANNELS_L1,  WINDOW_SIZE, 1])
@@ -37,6 +43,9 @@ with tf.variable_scope("layer2"):
     print("KERNEL2", KERNEL2)
     filter_weights = weight_variable(KERNEL2, name="weights")
     feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1,1,1,1], padding='SAME')
+    feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
+                             epsilon=epsilon_bn, activation_fn=None)
+
     activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
     activation = tf.nn.max_pool(activation, maxpool_ksize, [1,1,1,1], padding='VALID',
                                 data_format='NHWC', name='maxpool')
@@ -47,6 +56,9 @@ with tf.variable_scope("layer3"):
     print("KERNEL3", KERNEL3)
     filter_weights = weight_variable(KERNEL3, name="weights")
     feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1,1,1,1], padding='SAME')
+    feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
+                             epsilon=epsilon_bn, activation_fn=None)
+
     activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
     activation = tf.nn.max_pool(activation, maxpool_ksize, [1,1,1,1], padding='VALID',
                                 data_format='NHWC', name='maxpool')
@@ -63,8 +75,16 @@ with tf.variable_scope("layer4"):
 
 cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=y_conv, labels=y_))
 
+"add batch norm"
+update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+if update_ops:
+    updates = tf.group(*update_ops)
+    total_loss = control_flow_ops.with_dependencies([updates], cross_entropy)
+else:
+    total_loss = cross_entropy
+
 optimizer = tf.train.AdamOptimizer(3e-4)
-gradients = optimizer.compute_gradients(cross_entropy)
+gradients = optimizer.compute_gradients(total_loss)
 global_step = tf.Variable(0, name='global_step', trainable=False)
 train_step = optimizer.minimize(cross_entropy)
 correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))

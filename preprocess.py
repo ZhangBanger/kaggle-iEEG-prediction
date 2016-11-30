@@ -57,8 +57,17 @@ def write_segments(data_root):
     for mat_file_name in file_names:
         train_file_name = os.path.join(preprocessed_dir, mat_file_name.replace(".mat", ".train"))
         valid_file_name = os.path.join(preprocessed_dir, mat_file_name.replace(".mat", ".valid"))
+        if os.path.exists(train_file_name) and os.path.exists(valid_file_name):
+            print("Skipping existing file:", train_file_name)
+            print("Skipping existing file:", valid_file_name)
+            continue
+
         label = get_label(mat_file_name)
-        data = mat_to_data(os.path.join(raw_folder, mat_file_name))
+        try:
+            data = mat_to_data(os.path.join(raw_folder, mat_file_name))
+        except ValueError:
+            print("Skipping broken file:", mat_file_name)
+            continue
 
         xs = data["data"]
         xs = normalize(xs)
@@ -72,6 +81,7 @@ def write_segments(data_root):
         train_writer = tf.python_io.TFRecordWriter(train_file_name)
         valid_writer = tf.python_io.TFRecordWriter(valid_file_name)
         print("Writing file:", train_file_name)
+        print("Writing file:", valid_file_name)
 
         for idx, x in enumerate(xs):
             example = to_example_proto(x, label)

@@ -1,65 +1,54 @@
-# from keras.layers import Embedding, Input, Dense, Convolution2D, MaxPooling2D, UpSampling2D
+import numpy as np
+import tensorflow as tf
 
-from keras.layers import (Dropout, Activation, Dense, Convolution1D, Convolution2D, MaxPooling2D, Flatten)
-from keras.layers.convolutional import ZeroPadding2D
-from keras.layers.core import Reshape
-from keras.layers.normalization import BatchNormalization
-from keras.models import Sequential
+from preprocess import sample_generator, WINDOW_SIZE, CHANNELS
+from util import weight_variable, bias_variable
 
-# create the model
-batch_size = 256
-channels = 16
-sequence_len = 1000
-embed_dim = 128
-# input_dim = 3
-# sequence_len = 50
-# embed_dim = 8
-drop_prob = 0.25
+BATCH_SIZE = 256
 
-input_shape = (sequence_len, channels)
+sess = tf.Session()
 
-print('Build model...')
-mo = Sequential()
+x = tf.placeholder(tf.float32, shape=[None, WINDOW_SIZE, CHANNELS])
+y_ = tf.placeholder(tf.float32, shape=[None, 1])
 
-nfilt1 = 16
+keep_prob = tf.placeholder(tf.float32)
 
-mo.add(Convolution1D(nb_filter=nfilt1, filter_length=1,
-                     input_dim=channels, input_length=sequence_len,
-                     W_regularizer='l1l2',
-                     ))
-# output: 3D tensor with shape: (samples, new_steps, nb_filter). steps value might have changed due to padding.
-mo.add(Reshape((1, nfilt1, sequence_len)))
-mo.add(BatchNormalization())
-mo.add(Activation('elu'))
-mo.add(Dropout(drop_prob))
+with tf.variable_scope("layer1"):
+    filter_weights = weight_variable([1, CHANNELS, CHANNELS])
+    feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
+    activation = tf.nn.elu(feature_map + bias_variable([WINDOW_SIZE, CHANNELS]))
+    dropout = tf.nn.dropout(activation, keep_prob=keep_prob)
 
-mo.add(Convolution2D(nb_filter=4, nb_row=2, nb_col=8,
-                     W_regularizer='l1l2', ))
-mo.add(BatchNormalization())
-mo.add(ZeroPadding2D(padding=(1, 4)))
-mo.add(Activation('elu'))
-mo.add(MaxPooling2D((2, 4)))
-mo.add(Dropout(drop_prob))
+with tf.variable_scope("layer4"):
+    flattened = tf.reshape(activation, [-1, WINDOW_SIZE * CHANNELS])
+    weights = weight_variable([WINDOW_SIZE * CHANNELS, 1])
+    bias = bias_variable([1])
+    y_conv = tf.matmul(flattened, weights) + bias
 
-mo.add(Convolution2D(nb_filter=4, nb_row=8, nb_col=4,
-                     W_regularizer='l1l2', ))
-mo.add(BatchNormalization())
-mo.add(ZeroPadding2D(padding=(1, 4)))
-mo.add(Activation('elu'))
-mo.add(MaxPooling2D((2, 4)))
-mo.add(Dropout(drop_prob))
+cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=y_conv, labels=y_))
 
-#################
-print(mo.summary())
+optimizer = tf.train.AdamOptimizer(3e-4)
+global_step = tf.Variable(0, name='global_step', trainable=False)
+train_step = optimizer.minimize(cross_entropy)
+correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
+accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-mo.add(Flatten())
-mo.add(Dense(1))
-mo.add(Activation('sigmoid'))
+sess.run(tf.initialize_all_variables())
 
-# try using different optimizers and different optimizer configs
-mo.compile(loss='binary_crossentropy',
-           optimizer='adam',
-           metrics=['accuracy'])
+for iteration in range(20000):
+    xs = []
+    ys = []
+    for j in range(BATCH_SIZE):
+        data, label, meta = next(sample_generator)
+        xs.append(data)
+        ys.append(label)
 
-# print(model.summary())
-# # model.fit(X_train, y_train, validation_data=(X_test, y_test), nb_epoch=3, batch_size=64)
+    xs = np.dstack(xs).transpose((2, 0, 1))
+    ys = np.vstack(ys)
+
+    _, train_loss, train_accuracy = sess.run(
+        [train_step, cross_entropy, accuracy],
+        feed_dict={x: xs, y_: ys, keep_prob: 0.75}
+    )
+
+    print("step %d, training accuracy %g, train loss %.4f" % (iteration, train_accuracy, train_loss))

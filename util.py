@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 
 
 def gauss_kern_1d(size, factor=1.5):
@@ -19,3 +20,13 @@ def subsample(x, channels, rate):
 def normalize(x):
     # Hacky normalization based on eyeball
     return x / 32.
+
+
+def weight_variable(shape, name="W"):
+    initial = tf.truncated_normal(shape, stddev=0.1)
+    return tf.Variable(initial, name=name)
+
+
+def bias_variable(shape, name="b"):
+    initial = tf.constant(0.1, shape=shape)
+    return tf.Variable(initial, name=name)

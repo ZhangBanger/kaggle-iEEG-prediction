@@ -134,11 +134,6 @@ train_logits = inference(example_batch)
 train_loss = loss(train_logits, label_batch)
 train_step = optimize(train_loss)
 
-# # Set up validation pipeline
-# valid_inputs, valid_labels = input_pipeline(batch_size=1024, train=False)
-# valid_logits = inference(valid_inputs)
-# valid_loss = loss(valid_logits, valid_labels)
-
 # Start graph & runners
 sess = tf.Session()
 
@@ -160,9 +155,6 @@ try:
 
         if step % 10 == 0:
             print('Step %d: loss = %.2f (%.3f sec)' % (step, loss_value, duration))
-            # print("Sampling validation set")
-            # valid_total_loss, valid_ce = sess.run([valid_loss, valid_ce_loss], feed_dict={keep_prob: 1.})
-            # print("Validation loss = %.2f " % valid_ce)
 
         step += 1
 

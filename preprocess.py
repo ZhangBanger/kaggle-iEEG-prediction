@@ -47,14 +47,19 @@ def to_example_proto(x, label):
 
 
 def from_example_proto(serialized_example):
-    return tf.parse_single_example(
+    features = tf.parse_single_example(
         serialized_example,
         # Defaults are not specified since both keys are required.
         features={
             'data': tf.FixedLenFeature([], tf.float32),
             'shape': tf.FixedLenFeature([2], tf.int64),
             'label': tf.FixedLenFeature([], tf.float64),
-        })
+        }
+    )
+    x_shape = features['shape']
+    x = tf.reshape(features['data'], x_shape)
+    label = features['label']
+    return x, label
 
 
 def write_segments(data_root):

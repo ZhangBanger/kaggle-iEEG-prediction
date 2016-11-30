@@ -12,7 +12,7 @@ from util import weight_variable, bias_variable, variable_summaries
 data_dir = "~/data/seizure-prediction/preprocessed"
 
 NUM_EPOCHS = 10
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 READ_THREADS = 32
 WINDOW_SIZE = 1000
 CHANNELS = 16
@@ -109,15 +109,17 @@ def inference(x):
 
 
 def loss(logits, y_):
-    cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y_))
+    cross_entropy = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(logits, y_)
+                                  )
 
     "add batch norm"
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    if update_ops:
-        updates = tf.group(*update_ops)
-        return control_flow_ops.with_dependencies([updates], cross_entropy)
-    else:
-        return cross_entropy
+    #if update_ops:
+    #    updates = tf.group(*update_ops)
+    #    return control_flow_ops.with_dependencies([updates], cross_entropy)
+    #else:
+    return cross_entropy
 
 
 def optimize(loss_op):
@@ -131,13 +133,23 @@ def optimize(loss_op):
 
 # Set up training pipeline
 example_batch, label_batch = input_pipeline(batch_size=BATCH_SIZE, train=True, data_dir=data_dir)
+
+_, label_var = tf.nn.moments(label_batch, [0,1])
+
 train_logits = inference(example_batch)
+#_, logits_var = tf.nn.moments(tf.nn.softmax(train_logits), [0,1])
+#logits_l2 = tf.reduce_mean((tf.nn.softmax(train_logits)-label_batch)**2)
+
 train_loss = loss(train_logits, label_batch)
 train_step = optimize(train_loss)
 
 # Start graph & runners
 sess = tf.Session()
 
+#init_op = tf.initialize_all_variables()
+#init_op = tf.variables_initializer(
+#            tf.group(tf.global_variables(),
+#                    tf.local_variables() ))
 init_op = tf.group(tf.global_variables_initializer(),
                    tf.local_variables_initializer())
 sess.run(init_op)
@@ -151,12 +163,13 @@ step = 0
 try:
     while not coord.should_stop():
         start_time = time.time()
-        _, loss_value = sess.run([train_step, train_loss], feed_dict={keep_prob: 0.75})
+        _, loss_value,  = \
+               sess.run([train_step, train_loss],
+                       feed_dict={keep_prob: 0.75})
         duration = time.time() - start_time
 
-        if step % 10 == 0:
+        if step % 1 == 0:
             print('Step %d: loss = %.2f (%.3f sec)' % (step, loss_value, duration))
-
         step += 1
 
 except tf.errors.OutOfRangeError:

@@ -18,7 +18,7 @@ def subsample(x, channels, rate):
 
 
 def normalize(x):
-    # Hacky normalization based on eyeball
+    # 32 is the magic number!
     return x / 32.
 
 

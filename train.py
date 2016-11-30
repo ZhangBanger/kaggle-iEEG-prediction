@@ -28,6 +28,7 @@ with tf.variable_scope("layer4"):
 cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=y_conv, labels=y_))
 
 optimizer = tf.train.AdamOptimizer(3e-4)
+gradients = optimizer.compute_gradients(cross_entropy)
 global_step = tf.Variable(0, name='global_step', trainable=False)
 train_step = optimizer.minimize(cross_entropy)
 correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
@@ -44,6 +45,7 @@ for iteration in range(20000):
         # data, label, meta = next(sample_generator)
         # xs.append(data)
         # ys.append(label)
+    # reader = tf.RecordReader()
 
     xs = np.dstack(xs).transpose((2, 0, 1))
     ys = np.vstack(ys)

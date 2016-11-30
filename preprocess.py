@@ -46,18 +46,17 @@ def to_example_proto(x, label):
     )
 
 
-def from_example_proto(serialized_example):
+def from_example_proto(serialized_example, shape):
     features = tf.parse_single_example(
         serialized_example,
         # Defaults are not specified since both keys are required.
         features={
-            'data': tf.FixedLenFeature([], tf.float32),
+            'data': tf.FixedLenFeature([shape[0] * shape[1]] , tf.float32),
             'shape': tf.FixedLenFeature([2], tf.int64),
-            'label': tf.FixedLenFeature([], tf.float64),
+            'label': tf.FixedLenFeature([1], tf.float32),
         }
     )
-    x_shape = features['shape']
-    x = tf.reshape(features['data'], x_shape)
+    x = tf.reshape(features['data'], shape)
     label = features['label']
     return x, label
 

@@ -3,22 +3,9 @@ import tensorflow as tf
 from sklearn import datasets
 from tensorflow.python.framework import ops
 
+from util import variable_summaries
+
 ops.reset_default_graph()
-
-
-def variable_summaries(var, name):
-    """Attach a lot of summaries to a Tensor."""
-    with tf.name_scope('summaries'):
-        mean = tf.reduce_mean(var)
-        tf.scalar_summary('mean/' + name, mean)
-        with tf.name_scope('stddev'):
-            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.scalar_summary('stddev/' + name, stddev)
-        tf.scalar_summary('max/' + name, tf.reduce_max(var))
-        tf.scalar_summary('min/' + name, tf.reduce_min(var))
-        tf.scalar_summary('l2norm/' + name, tf.nn.l2_loss(var))
-        tf.scalar_summary('l1norm/' + name, tf.reduce_sum(tf.abs(var)))
-        tf.histogram_summary(name, var)
 
 
 flags = tf.app.flags
@@ -43,7 +30,7 @@ b = tf.Variable(tf.random_normal(shape=[1, 1]), name='bias')
 
 # Declare model operations
 model_output = tf.add(tf.matmul(x_data, A), b, name='activation')
-variable_summaries(model_output, model_output.name)
+variable_summaries(model_output)
 
 # Declare the elastic net loss function
 elastic_param1 = tf.constant(1.)
@@ -69,8 +56,8 @@ my_opt = tf.train.GradientDescentOptimizer(0.001)
 
 grads_vars = my_opt.compute_gradients(loss=ce_loss)
 for grad, trainable_var in grads_vars:
-    variable_summaries(var=grad, name=grad.name)
-    variable_summaries(var=trainable_var, name=trainable_var.name)
+    variable_summaries(grad)
+    variable_summaries(trainable_var)
 train_step = my_opt.apply_gradients(grads_and_vars=grads_vars)
 
 # Load the data

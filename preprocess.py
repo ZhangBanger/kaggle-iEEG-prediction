@@ -1,8 +1,8 @@
 import os
-from itertools import cycle
 
 import numpy as np
 import six
+import tensorflow as tf
 from scipy.io import loadmat
 
 from util import subsample, normalize
@@ -25,43 +25,60 @@ def mat_to_data(path):
 
 
 def get_label(infile):
-    return infile.split(".")[-2][-1] == "0"
+    return infile.split(".")[-2][-1] == "1"
 
 
-def generate_segment(folder):
-    file_paths = cycle(filter(lambda x: x.endswith(".mat"), os.listdir(folder)))
-    for file_path in file_paths:
-        try:
-            infile = os.path.join(folder, file_path)
-            label = get_label(file_path)
-            data = mat_to_data(infile)
-            meta = [int(k) for k in file_path.split("/")[-1].split(".")[0].split("_")[:2]]
-            xs = data["data"]
-            xs = normalize(xs)
-
-            if SUBSAMPLE:
-                xs = subsample(xs, channels=CHANNELS, rate=SUBSAMPLE_RATE)
-
-            yield xs, np.array(label), meta
-        except ValueError:
-            continue
+def _float_feature(value):
+    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
 
-def generate_sample(segment_gen):
-    for xs, ys, meta in segment_gen:
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+
+
+def to_tf_example(x, label):
+    return tf.train.Example(
+        features=tf.train.Features(
+            feature={
+                'data': _float_feature(np.hstack(x).astype(dtype=float)),
+                'shape': _int64_feature(x.shape),
+                'label': _float_feature([label])
+            }
+        )
+    )
+
+
+def write_segments(data_root):
+    file_names = filter(lambda x: x.endswith(".mat"), os.listdir(data_root))
+    segment_dir = os.path.join(data_root, "segments")
+
+    if not os.path.exists(segment_dir):
+        os.mkdir(segment_dir)
+
+    for mat_file_name in file_names:
+        segment_file_name = os.path.join(segment_dir, mat_file_name.replace(".mat", ".tfrecords"))
+        label = get_label(mat_file_name)
+        data = mat_to_data(os.path.join(data_root, mat_file_name))
+
+        xs = data["data"]
+        xs = normalize(xs)
+
+        if SUBSAMPLE:
+            xs = subsample(xs, channels=CHANNELS, rate=SUBSAMPLE_RATE)
+
         num_windows = xs.shape[0] // WINDOW_SIZE
         xs = np.reshape(xs, (num_windows, WINDOW_SIZE, CHANNELS))
+
+        writer = tf.python_io.TFRecordWriter(segment_file_name)
+        print("Writing file:", segment_file_name)
+
         for x in xs:
-            yield x, ys, meta
+            example = to_tf_example(x, label)
+            writer.write(example.SerializeToString())
+
+        writer.close()
 
 
 data_dir = os.path.expanduser("~/data/seizure-prediction")
 
-segment_generator = generate_segment(data_dir)
-sample_generator = generate_sample(segment_gen=segment_generator)
-
-if __name__ == '__main__':
-    for idx, (x, y, meta) in enumerate(sample_generator):
-        if idx % 1000 == 0:
-           print("Processing record ", idx)
-           print(x, y, meta)
+write_segments(data_dir)

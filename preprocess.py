@@ -36,7 +36,7 @@ def _int64_feature(value):
     return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
 
-def to_tf_example(x, label):
+def to_example_proto(x, label):
     return tf.train.Example(
         features=tf.train.Features(
             feature={
@@ -73,12 +73,11 @@ def write_segments(data_root):
         print("Writing file:", segment_file_name)
 
         for x in xs:
-            example = to_tf_example(x, label)
+            example = to_example_proto(x, label)
             writer.write(example.SerializeToString())
 
         writer.close()
 
-
-data_dir = os.path.expanduser("~/data/seizure-prediction")
-
-write_segments(data_dir)
+if __name__ == '__main__':
+    data_dir = os.path.expanduser("~/data/seizure-prediction")
+    write_segments(data_dir)

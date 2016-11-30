@@ -9,7 +9,7 @@ from tensorflow.python.ops import control_flow_ops
 from preprocess import from_example_proto
 from util import weight_variable, bias_variable, variable_summaries
 
-NUM_EPOCHS = 1
+NUM_EPOCHS = 10
 BATCH_SIZE = 128
 READ_THREADS = 32
 WINDOW_SIZE = 1000
@@ -72,7 +72,7 @@ def inference(x):
                                  epsilon=epsilon_bn, activation_fn=None)
         activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
-        activation = tf.reshape(activation, [BATCH_SIZE, CHANNELS_L1, WINDOW_SIZE, 1])
+        activation = tf.reshape(activation, [-1, CHANNELS_L1, WINDOW_SIZE, 1])
 
     with tf.variable_scope("layer2"):
         filter_weights = weight_variable(KERNEL2, name="weights")

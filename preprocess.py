@@ -101,9 +101,9 @@ def write_segments(data_root):
         for idx, x in enumerate(xs):
             example = to_example_proto(x, label)
             if idx % 10 == 0:
-                train_writer.write(example.SerializeToString())
-            else:
                 valid_writer.write(example.SerializeToString())
+            else:
+                train_writer.write(example.SerializeToString())
 
         train_writer.close()
         valid_writer.close()

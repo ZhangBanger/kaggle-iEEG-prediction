@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from preprocess import sample_generator, WINDOW_SIZE, CHANNELS
+from preprocess import WINDOW_SIZE, CHANNELS
 from util import weight_variable, bias_variable
 
 BATCH_SIZE = 256
@@ -38,10 +38,12 @@ sess.run(tf.initialize_all_variables())
 for iteration in range(20000):
     xs = []
     ys = []
-    for j in range(BATCH_SIZE):
-        data, label, meta = next(sample_generator)
-        xs.append(data)
-        ys.append(label)
+    # Replace this with file reader code
+    # https://www.tensorflow.org/versions/r0.12/how_tos/reading_data/index.html#file-formats
+    # for j in range(BATCH_SIZE):
+        # data, label, meta = next(sample_generator)
+        # xs.append(data)
+        # ys.append(label)
 
     xs = np.dstack(xs).transpose((2, 0, 1))
     ys = np.vstack(ys)

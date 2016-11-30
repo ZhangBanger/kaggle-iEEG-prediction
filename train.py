@@ -9,8 +9,6 @@ from tensorflow.python.ops import control_flow_ops
 from preprocess import from_example_proto
 from util import weight_variable, bias_variable, variable_summaries
 
-data_dir = "~/data/seizure-prediction/preprocessed"
-
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
 READ_THREADS = 32
@@ -31,6 +29,7 @@ epsilon_bn = 0.001
 
 keep_prob = tf.placeholder(tf.float32)
 
+
 def read_and_decode(filename_queue, shape):
     reader = tf.TFRecordReader()
     _, serialized_example = reader.read(filename_queue)
@@ -39,10 +38,7 @@ def read_and_decode(filename_queue, shape):
     return example, label
 
 
-def input_pipeline(batch_size=BATCH_SIZE, read_threads=READ_THREADS, train=True, 
-                    data_dir = "~/data/seizure-prediction/preprocessed"):
-    data_dir = os.path.expanduser(data_dir)
-
+def input_pipeline(data_dir, batch_size, read_threads, train=True):
     file_suffix = ".train" if train else ".valid"
     filename_list = list(
         map(
@@ -110,8 +106,8 @@ def inference(x):
 
 def loss(logits, y_):
     cross_entropy = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(logits, y_)
-                                  )
+        tf.nn.sigmoid_cross_entropy_with_logits(logits, y_)
+    )
 
     "add batch norm"
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -131,25 +127,28 @@ def optimize(loss_op):
     global_step = tf.Variable(0, name='global_step', trainable=False)
     return optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
-# Set up training pipeline
-example_batch, label_batch = input_pipeline(batch_size=BATCH_SIZE, train=True, data_dir=data_dir)
 
-_, label_var = tf.nn.moments(label_batch, [0,1])
+def accuracy(predictions, labels):
+    correct_prediction = tf.equal(tf.argmax(predictions, 1), tf.argmax(labels, 1))
+    return tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+
+# Set up training pipeline
+preprocessed_data_folder = os.path.expanduser("~/data/seizure-prediction/preprocessed")
+
+example_batch, label_batch = input_pipeline(
+    data_dir=preprocessed_data_folder,
+    batch_size=BATCH_SIZE,
+    read_threads=READ_THREADS,
+)
 
 train_logits = inference(example_batch)
-#_, logits_var = tf.nn.moments(tf.nn.softmax(train_logits), [0,1])
-#logits_l2 = tf.reduce_mean((tf.nn.softmax(train_logits)-label_batch)**2)
-
 train_loss = loss(train_logits, label_batch)
 train_step = optimize(train_loss)
+train_accuracy = accuracy(train_logits, label_batch)
 
 # Start graph & runners
 sess = tf.Session()
-
-#init_op = tf.initialize_all_variables()
-#init_op = tf.variables_initializer(
-#            tf.group(tf.global_variables(),
-#                    tf.local_variables() ))
 init_op = tf.group(tf.global_variables_initializer(),
                    tf.local_variables_initializer())
 sess.run(init_op)
@@ -163,13 +162,12 @@ step = 0
 try:
     while not coord.should_stop():
         start_time = time.time()
-        _, loss_value,  = \
-               sess.run([train_step, train_loss],
-                       feed_dict={keep_prob: 0.75})
+        _, loss_value, train_acc = sess.run([train_step, train_loss, train_accuracy],
+                                            feed_dict={keep_prob: 0.75})
         duration = time.time() - start_time
 
         if step % 1 == 0:
-            print('Step %d: loss = %.2f (%.3f sec)' % (step, loss_value, duration))
+            print('Step %d: loss = %.2f (%.3f sec) | acc = %.3f' % (step, loss_value, duration, train_acc))
         step += 1
 
 except tf.errors.OutOfRangeError:

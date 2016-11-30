@@ -4,7 +4,18 @@ import tensorflow as tf
 from preprocess import WINDOW_SIZE, CHANNELS
 from util import weight_variable, bias_variable
 
-BATCH_SIZE = 256
+BATCH_SIZE = 128
+WINDOW_SIZE = 100
+CHANNELS = 16
+
+CHANNELS_L1 =  32
+CHANNELS_L2 = 4
+CHANNELS_L3 = 2
+
+# dim order:   x, y, c_in, c_out
+maxpool_ksize = [1, 2, 4, 1]
+KERNEL2 = [30, 2, 1, CHANNELS_L2]
+KERNEL3 = [8, 4, CHANNELS_L2, CHANNELS_L3]
 
 sess = tf.Session()
 
@@ -14,14 +25,39 @@ y_ = tf.placeholder(tf.float32, shape=[None, 1])
 keep_prob = tf.placeholder(tf.float32)
 
 with tf.variable_scope("layer1"):
-    filter_weights = weight_variable([1, CHANNELS, CHANNELS])
+    filter_weights = weight_variable([1, CHANNELS, CHANNELS_L1], name="weights")
     feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
-    activation = tf.nn.elu(feature_map + bias_variable([WINDOW_SIZE, CHANNELS]))
-    dropout = tf.nn.dropout(activation, keep_prob=keep_prob)
+    print("layer1/feature_map", feature_map.get_shape())
+    activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+    activation = tf.nn.dropout(activation, keep_prob=keep_prob)
+    activation = tf.reshape(activation, [BATCH_SIZE,  CHANNELS_L1,  WINDOW_SIZE, 1])
+    print("layer1", activation.get_shape())
+
+with tf.variable_scope("layer2"):
+    print("KERNEL2", KERNEL2)
+    filter_weights = weight_variable(KERNEL2, name="weights")
+    feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1,1,1,1], padding='SAME')
+    activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+    activation = tf.nn.max_pool(activation, maxpool_ksize, [1,1,1,1], padding='VALID',
+                                data_format='NHWC', name='maxpool')
+    activation = tf.nn.dropout(activation, keep_prob=keep_prob)
+    print("layer2", activation.get_shape())
+
+with tf.variable_scope("layer3"):
+    print("KERNEL3", KERNEL3)
+    filter_weights = weight_variable(KERNEL3, name="weights")
+    feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1,1,1,1], padding='SAME')
+    activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+    activation = tf.nn.max_pool(activation, maxpool_ksize, [1,1,1,1], padding='VALID',
+                                data_format='NHWC', name='maxpool')
+    activation = tf.nn.dropout(activation, keep_prob=keep_prob)
+    print("layer3", activation.get_shape())
 
 with tf.variable_scope("layer4"):
-    flattened = tf.reshape(activation, [-1, WINDOW_SIZE * CHANNELS])
-    weights = weight_variable([WINDOW_SIZE * CHANNELS, 1])
+    dim = np.prod(activation.get_shape().as_list()[1:])
+    print(dim)
+    flattened = tf.reshape(activation, [-1, dim])
+    weights = weight_variable([dim, 1])
     bias = bias_variable([1])
     y_conv = tf.matmul(flattened, weights) + bias
 
@@ -46,9 +82,10 @@ for iteration in range(20000):
         # xs.append(data)
         # ys.append(label)
     # reader = tf.RecordReader()
-
-    xs = np.dstack(xs).transpose((2, 0, 1))
-    ys = np.vstack(ys)
+    #xs = np.dstack(xs).transpose((2, 0, 1))
+    #ys = np.vstack(ys)
+    xs = np.random.randn(*[BATCH_SIZE, WINDOW_SIZE, CHANNELS])
+    ys = np.random.binomial(1,0.2, BATCH_SIZE).reshape(-1, 1)
 
     _, train_loss, train_accuracy = sess.run(
         [train_step, cross_entropy, accuracy],

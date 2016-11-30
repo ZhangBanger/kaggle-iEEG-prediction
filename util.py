@@ -18,15 +18,30 @@ def subsample(x, channels, rate):
 
 
 def normalize(x):
-    # Hacky normalization based on eyeball
+    # 32 is the magic number!
     return x / 32.
 
 
 def weight_variable(shape, name="W"):
     initial = tf.truncated_normal(shape, stddev=0.1)
-    return tf.Variable(initial, name=name)
+    return tf.get_variable(name=name, initializer=initial)
 
 
 def bias_variable(shape, name="b"):
     initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial, name=name)
+    return tf.get_variable(name=name, initializer=initial)
+
+
+def variable_summaries(var):
+    """Attach a lot of summaries to a Tensor."""
+    with tf.name_scope('summaries'):
+        mean = tf.reduce_mean(var)
+        tf.scalar_summary('mean/' + var.name, mean)
+        with tf.name_scope('stddev'):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.scalar_summary('stddev/' + var.name, stddev)
+        tf.scalar_summary('max/' + var.name, tf.reduce_max(var))
+        tf.scalar_summary('min/' + var.name, tf.reduce_min(var))
+        tf.scalar_summary('l2norm/' + var.name, tf.nn.l2_loss(var))
+        tf.scalar_summary('l1norm/' + var.name, tf.reduce_sum(tf.abs(var)))
+        tf.histogram_summary(var.name, var)

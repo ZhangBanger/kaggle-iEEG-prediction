@@ -7,16 +7,15 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.layers.python.layers import batch_norm
 from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.training.saver import latest_checkpoint
 
 from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_DIR
 from util import weight_variable, bias_variable, variable_summaries
-from util_tf import get_prefix
 
-# data
-DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
-
-# Checkpoint Config
+# Directory Structure
 MODEL_ID = "eeg-conv"
+DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
+SUMMARY_LOG = os.path.join(DATA_ROOT, "log", MODEL_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", MODEL_ID)
 if not os.path.exists(MODEL_DIR):
     os.mkdir(MODEL_DIR)
@@ -88,7 +87,7 @@ def inference(x):
         feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
                                  epsilon=epsilon_bn, activation_fn=None)
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
         activation = tf.reshape(activation, [-1, CHANNELS_L1, WINDOW_SIZE, 1])
 
@@ -98,7 +97,7 @@ def inference(x):
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
                                  epsilon=epsilon_bn, activation_fn=None)
 
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
                                     data_format='NHWC', name='maxpool')
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
@@ -109,7 +108,7 @@ def inference(x):
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
                                  epsilon=epsilon_bn, activation_fn=None)
 
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
                                     data_format='NHWC', name='maxpool')
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
@@ -128,6 +127,7 @@ def loss(logits, y_):
     cross_entropy = tf.reduce_mean(
         tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=POSITIVE_WEIGHT)
     )
+    tf.scalar_summary("loss", cross_entropy)
 
     # Include batch norm as dependency so parameters can update
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -151,11 +151,14 @@ def optimize(loss_op):
 
 
 def evaluation(logits, labels):
-    predict_floats = tf.round(tf.nn.sigmoid(logits))
+    predict_floats = tf.round(tf.nn.sigmoid(logits), name="predictions")
+    variable_summaries(predict_floats)
     label_floats = tf.cast(labels, tf.float32)
 
     accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
+    tf.scalar_summary("accuracy", accuracy)
     auc, update_auc = tf.contrib.metrics.streaming_auc(predict_floats, label_floats)
+    tf.scalar_summary("auc", auc)
 
     return accuracy, auc, update_auc
 
@@ -184,18 +187,19 @@ def train_model():
 
     # Start graph & runners
     sess = tf.Session()
+    merged = tf.summary.merge_all()
+    train_writer = tf.train.SummaryWriter(os.path.join(SUMMARY_LOG, 'train'), sess.graph)
+    valid_writer = tf.train.SummaryWriter(os.path.join(SUMMARY_LOG, 'test'))
 
+    saver = tf.train.Saver()
     init_op = tf.group(tf.global_variables_initializer(),
                        tf.local_variables_initializer())
     sess.run(init_op)
 
-    saver = tf.train.Saver()
-    if CONTINUE:
-        checkpoint_file, global_step_offset = get_prefix(MODEL_DIR, by_accuracy=False)
+    if latest_checkpoint(MODEL_DIR):
+        checkpoint_file = latest_checkpoint(MODEL_DIR)
         print("Restoring the model from most recent checkpoint:\t%s" % checkpoint_file)
         saver.restore(sess, checkpoint_file)
-    else:
-        global_step_offset = 0
 
     coord = tf.train.Coordinator()
     threads = tf.train.start_queue_runners(sess=sess, coord=coord)
@@ -205,24 +209,26 @@ def train_model():
     try:
         while not coord.should_stop():
             start_time = time.time()
-            _, step, train_loss, train_acc, train_auc, _ = sess.run(
-                [train_op, train_step, batch_loss, batch_accuracy, batch_auc, update_auc],
+            _, train_summary, step, train_loss, train_acc, train_auc, _ = sess.run(
+                [train_op, merged, train_step, batch_loss, batch_accuracy, batch_auc, update_auc],
                 feed_dict={keep_prob: KEEP_PROB}
             )
+            train_writer.add_summary(train_summary, step)
             duration = time.time() - start_time
 
             if step % EVAL_EVERY == 0:
                 valid_xs, valid_ys = sess.run([valid_predictors, valid_label])
-                valid_loss, valid_acc, valid_auc, _ = sess.run(
-                    [batch_loss, batch_accuracy, batch_auc, update_auc],
+                valid_summary, valid_loss, valid_acc, valid_auc, _ = sess.run(
+                    [merged, batch_loss, batch_accuracy, batch_auc, update_auc],
                     feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
                 )
+                valid_writer.add_summary(valid_summary, step)
                 chkpt_file = os.path.join(
                     MODEL_DIR,
-                    "step_%u.val_acc_%u" % (global_step_offset + step, int(1000 * valid_acc))
+                    "val_auc_%u" % int(1000 * valid_auc)
                 )
-                saver.save(sess, chkpt_file)
-                print('Step %d (with previous: %d) (%3f sec)' % (step, global_step_offset + step, duration))
+                saver.save(sess, chkpt_file, global_step=step)
+                print('Step %d (%3f sec)' % (step, duration))
                 print('train-loss = %.2f, train-acc = %.3f, train-auc = %.2f' % (
                     train_loss, train_acc, train_auc
                 ))
@@ -244,12 +250,13 @@ def predict(output_file, separator=",", mode="w+"):
     print("Setting up inference subgraph")
     predict_input = tf.placeholder(dtype=float, shape=[None, WINDOW_SIZE, CHANNELS])
     batch_logits = inference(predict_input)
-    predicted_probabilities = tf.nn.softmax(batch_logits)
+    predicted_probabilities = tf.nn.sigmoid(batch_logits)
     mean_prediction = tf.reduce_mean(predicted_probabilities)
 
     print("Restoring model from training with best validation accuracy")
+    sess = tf.Session()
     saver = tf.train.Saver()
-    checkpoint_file, initial_step = get_prefix(MODEL_DIR, by_accuracy=True)
+    checkpoint_file = latest_checkpoint(MODEL_DIR)
     print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
     saver.restore(sess, checkpoint_file)
 

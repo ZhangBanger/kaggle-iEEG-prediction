@@ -12,7 +12,7 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-RUN_ID = "eeg-net-deep"
+RUN_ID = "eeg-net-deep-lr-half"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
@@ -23,7 +23,7 @@ if not os.path.exists(MODEL_DIR):
 # General HyperParameters
 KEEP_PROB = 0.75
 LEARNING_RATE = 3e-4
-LR_DECAY = 0.9
+LR_DECAY = 0.5
 LR_DECAY_STEPS = 1000
 NUM_EPOCHS = 10
 BATCH_SIZE = 256
@@ -31,7 +31,7 @@ EVAL_BATCH = 512
 EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
-POSITIVE_WEIGHT = 9.
+POSITIVE_WEIGHT = 3.
 
 # Convolutional HyperParameters
 CHANNELS = 16

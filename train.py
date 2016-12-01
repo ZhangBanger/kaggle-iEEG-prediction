@@ -9,15 +9,22 @@ from tensorflow.python.ops import control_flow_ops
 
 from preprocess import from_example_proto
 from util import weight_variable, bias_variable, variable_summaries
+from util_tf import get_prefix
+
+"model saving"
+MODEL_DIR = "checkpoints_conv"
+REFRESH = False
+
+"hyperparams"
+KEEP_PROB = 0.75
 
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
-EVAL_BATCH = 1024
-EVAL_EVERY = 100
-READ_THREADS = 32
+EVAL_BATCH = 64
+EVAL_EVERY = 2
+READ_THREADS = 8
 WINDOW_SIZE = 1000
 CHANNELS = 16
-
 CHANNELS_L1 = 32
 CHANNELS_L2 = 4
 CHANNELS_L3 = 2
@@ -167,14 +174,23 @@ train_step, train_op = optimize(batch_loss)
 
 # Start graph & runners
 sess = tf.Session()
+
 init_op = tf.group(tf.global_variables_initializer(),
                    tf.local_variables_initializer())
+
+saver = tf.train.Saver()
+if not REFRESH:
+    checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc = True)
+    print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
+    saver.restore(sess, checkpoint_file)
+else:
+    initial_step = 0
 sess.run(init_op)
 
 coord = tf.train.Coordinator()
 threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
-# Training Loop
+print("Training Loop")
 step = 0
 try:
     while not coord.should_stop():
@@ -182,7 +198,7 @@ try:
         _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
             [train_op, train_step, batch_loss,
              batch_accuracy, batch_precision, batch_recall, batch_f1],
-            feed_dict={keep_prob: 0.75}
+            feed_dict={keep_prob: KEEP_PROB}
         )
         duration = time.time() - start_time
 
@@ -191,8 +207,11 @@ try:
             valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
                 [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
                 feed_dict={batch_example: valid_xs, batch_label: valid_ys, keep_prob: 1.}
-            )
-            print('Step %d (%3f sec)' % (step, duration))
+                )
+            chkpt_file = MODEL_DIR + "/" + "step_%u.val_acc_%u" % \
+                                (initial_step+step, int(1000*valid_acc))
+            save_path = saver.save(sess, chkpt_file)
+            print('Step %d (with previous: %d) (%3f sec)' % (step, initial_step+step, duration))
             print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
                 train_loss, train_acc, train_prec, train_rec, train_f1
             ))

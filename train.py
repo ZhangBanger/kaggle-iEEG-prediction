@@ -108,7 +108,7 @@ def inference(x):
 
 def loss(logits, y_):
     cross_entropy = tf.reduce_mean(
-        tf.nn.sigmoid_cross_entropy_with_logits(logits, y_)
+        tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=3.)
     )
 
     "add batch norm"
@@ -130,7 +130,7 @@ def optimize(loss_op):
     return global_step, optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
 
-def accuracy(logits, labels):
+def evaluation(logits, labels):
     predict_floats = tf.round(tf.nn.sigmoid(logits))
     label_floats = tf.cast(labels, tf.float32)
 
@@ -160,7 +160,7 @@ example_valid, label_valid = input_pipeline(
 
 batch_output = inference(batch_example)
 batch_loss = loss(batch_output, batch_label)
-batch_accuracy, batch_precision, batch_recall, batch_f1 = accuracy(batch_output, batch_label)
+batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_output, batch_label)
 
 train_step, train_op = optimize(batch_loss)
 

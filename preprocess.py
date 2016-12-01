@@ -46,7 +46,7 @@ def to_example_proto(x, label):
     )
 
 
-def from_example_proto(serialized_example, shape):
+def from_example_proto(serialized_example, shape, filename_queue):
     features = tf.parse_single_example(
         serialized_example,
         # Defaults are not specified since both keys are required.
@@ -58,7 +58,8 @@ def from_example_proto(serialized_example, shape):
     )
     x = tf.reshape(features['data'], shape)
     label = features['label']
-    return x, label
+    filename = np.array([42])
+    return x, label, filename
 
 
 def write_segments(data_root, indir = "train_1"):

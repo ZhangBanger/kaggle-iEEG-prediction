@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import time
 
 import numpy as np
@@ -10,6 +11,9 @@ from tensorflow.python.ops import control_flow_ops
 from preprocess import from_example_proto
 from util import weight_variable, bias_variable, variable_summaries
 from util_tf import get_prefix
+
+"data"
+DATA_FOLDER = "~/data/seizure-prediction/preprocessed"
 
 "model saving"
 MODEL_DIR = "checkpoints_conv"
@@ -43,12 +47,15 @@ keep_prob = tf.placeholder(tf.float32)
 def read_and_decode(filename_queue, shape):
     reader = tf.TFRecordReader()
     _, serialized_example = reader.read(filename_queue)
-    example, label = from_example_proto(serialized_example, shape=shape)
+    example, label, filename = from_example_proto(serialized_example, shape=shape, filename_queue=filename_queue)
 
-    return example, label
+    #filename_hash = [int(x) for x in str(filename).split('.')[0].split('_')]
+    #if len(filename_hash) ==2:
+    #    filename_hash.append(2)
+    return example, label, filename
 
 
-def input_pipeline(data_dir, batch_size, read_threads, train=True):
+def train_input_pipeline(data_dir, batch_size, read_threads, train=True):
     file_suffix = ".train" if train else ".valid"
     filename_list = list(
         map(
@@ -59,7 +66,7 @@ def input_pipeline(data_dir, batch_size, read_threads, train=True):
     num_epochs = NUM_EPOCHS if train else None
     filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
     shape = (WINDOW_SIZE, CHANNELS)
-    example_list = [read_and_decode(filename_queue, shape) for _ in range(read_threads)]
+    example_list = [read_and_decode(filename_queue, shape)[:2] for _ in range(read_threads)]
 
     min_after_dequeue = read_threads * batch_size // 8
     capacity = min_after_dequeue + (read_threads + 2) * batch_size
@@ -69,7 +76,32 @@ def input_pipeline(data_dir, batch_size, read_threads, train=True):
         capacity=capacity,
         min_after_dequeue=min_after_dequeue,
         allow_smaller_final_batch=True,
+        )
+
+def validation_input_pipeline(data_dir, batch_size, read_threads, train=False):
+    file_suffix = ".train" if train else ".valid"
+    filename_list = list(
+        map(
+            lambda filename: os.path.join(data_dir, filename),
+            filter(lambda filename: filename.endswith(file_suffix), os.listdir(data_dir))
+        )
     )
+    num_epochs = NUM_EPOCHS if train else None
+    filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
+    shape = (WINDOW_SIZE, CHANNELS)
+    example_list = []
+    for _ in range(read_threads):
+        example_list.append(read_and_decode(filename_queue, shape) )
+        #example_list[-1][-1] =  tf.string_to_number()
+    print("example_list", len(example_list))
+
+    min_after_dequeue = read_threads * batch_size // 8
+    capacity = min_after_dequeue + (read_threads + 2) * batch_size
+    #shapes=[shape, [1], [1]],
+    return tf.train.batch_join(example_list, batch_size, capacity=32,
+              enqueue_many=False,  dynamic_pad=False,
+              allow_smaller_final_batch=False, shared_name=None, name=None)
+
 
 
 def inference(x):
@@ -150,79 +182,140 @@ def evaluation(logits, labels):
     return raw_accuracy, precision, recall, f1
 
 
-# Set up training pipeline
-preprocessed_data_folder = os.path.expanduser("~/data/seizure-prediction/preprocessed")
+DATA_FOLDER = os.path.expanduser(DATA_FOLDER)
 
-batch_example, batch_label = input_pipeline(
-    data_dir=preprocessed_data_folder,
-    batch_size=BATCH_SIZE,
-    read_threads=READ_THREADS,
-)
+def train():
+    # Set up training pipeline
+    valid_predictors, label_valid = train_input_pipeline(
+        data_dir=DATA_FOLDER,
+        batch_size=EVAL_BATCH,
+        read_threads=READ_THREADS,
+        train=False
+    )
 
-example_valid, label_valid = input_pipeline(
-    data_dir=preprocessed_data_folder,
-    batch_size=EVAL_BATCH,
-    read_threads=READ_THREADS,
-    train=False
-)
+    batch_predictors, batch_label = train_input_pipeline(
+        data_dir=DATA_FOLDER,
+        batch_size=BATCH_SIZE,
+        read_threads=READ_THREADS,
+    )
 
-batch_output = inference(batch_example)
-batch_loss = loss(batch_output, batch_label)
-batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_output, batch_label)
+    batch_logits = inference(batch_predictors)
+    batch_loss = loss(batch_logits, batch_label)
+    batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_logits, batch_label)
 
-train_step, train_op = optimize(batch_loss)
+    train_step, train_op = optimize(batch_loss)
 
-# Start graph & runners
-sess = tf.Session()
+    # Start graph & runners
+    sess = tf.Session()
 
-init_op = tf.group(tf.global_variables_initializer(),
-                   tf.local_variables_initializer())
+    init_op = tf.group(tf.global_variables_initializer(),
+                       tf.local_variables_initializer())
+    sess.run(init_op)
 
-saver = tf.train.Saver()
-if not REFRESH:
+    saver = tf.train.Saver()
+    if not REFRESH:
+        checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc = True)
+        print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
+        saver.restore(sess, checkpoint_file)
+    else:
+        initial_step = 0
+
+    coord = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+
+    print("Training Loop")
+    step = 0
+    try:
+        while not coord.should_stop():
+            start_time = time.time()
+            _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
+                [train_op, train_step, batch_loss,
+                 batch_accuracy, batch_precision, batch_recall, batch_f1],
+                feed_dict={keep_prob: KEEP_PROB}
+            )
+            duration = time.time() - start_time
+
+            if step % EVAL_EVERY == 0:
+                valid_xs, valid_ys = sess.run([valid_predictors, label_valid])
+                valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
+                    [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
+                    feed_dict={batch_predictors: valid_xs, batch_label: valid_ys, keep_prob: 1.}
+                    )
+                chkpt_file = MODEL_DIR + "/" + "step_%u.val_acc_%u" % \
+                                    (initial_step+step, int(1000*valid_acc))
+                save_path = saver.save(sess, chkpt_file)
+                print('Step %d (with previous: %d) (%3f sec)' % (step, initial_step+step, duration))
+                print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
+                    train_loss, train_acc, train_prec, train_rec, train_f1
+                ))
+                print('valid-loss = %.2f, valid-acc = %.3f, valid-prec = %.2f, valid-rec = %.2f, valid-f1 = %.2f' % (
+                    valid_loss, valid_acc, valid_prec, valid_rec, valid_f1
+                ))
+
+    except tf.errors.OutOfRangeError:
+        print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))
+    finally:
+        coord.request_stop()
+
+    coord.join(threads)
+    sess.close()
+    return
+
+def predict(outfile, SEP="\t", mode = "w+"):
+
+    valid_predictors, label_valid, file_valid = validation_input_pipeline(
+        data_dir=DATA_FOLDER,
+        batch_size=EVAL_BATCH,
+        read_threads=READ_THREADS,
+        train=False
+    )
+    batch_logits = inference(valid_predictors)
+    # Start graph & runners
+    sess = tf.Session()
+
+    init_op = tf.group(tf.global_variables_initializer(),
+                       tf.local_variables_initializer())
+    sess.run(init_op)
+
+    saver = tf.train.Saver()
     checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc = True)
     print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
     saver.restore(sess, checkpoint_file)
-else:
-    initial_step = 0
-sess.run(init_op)
 
-coord = tf.train.Coordinator()
-threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+    coord = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
-print("Training Loop")
-step = 0
-try:
-    while not coord.should_stop():
-        start_time = time.time()
-        _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
-            [train_op, train_step, batch_loss,
-             batch_accuracy, batch_precision, batch_recall, batch_f1],
-            feed_dict={keep_prob: KEEP_PROB}
-        )
-        duration = time.time() - start_time
+    print("Predicting")
+    with open(outfile, mode=mode) as outfilehandle:
+        print( "prediction_file", "predicted_label", file=outfilehandle, sep=SEP)
+        step = 0
+        try:
+            while not coord.should_stop():
+                step +=1
+                start_time = time.time()
+                prediction_file, predicted_label = sess.run([ file_valid, batch_logits],
+                    feed_dict={ keep_prob: 1.}
+                                                           )
+                duration = time.time() - start_time
+                print("prediction batch %u (%.2f s)" %(step, duration))
+                for ff, logit_ in zip(prediction_file.ravel(), predicted_label.ravel()):
+                    probability = 1/(1+np.exp(-logit_))
+                    print(ff, probability, file=outfilehandle, sep=SEP)
 
-        if step % EVAL_EVERY == 0:
-            valid_xs, valid_ys = sess.run([example_valid, label_valid])
-            valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
-                [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
-                feed_dict={batch_example: valid_xs, batch_label: valid_ys, keep_prob: 1.}
-                )
-            chkpt_file = MODEL_DIR + "/" + "step_%u.val_acc_%u" % \
-                                (initial_step+step, int(1000*valid_acc))
-            save_path = saver.save(sess, chkpt_file)
-            print('Step %d (with previous: %d) (%3f sec)' % (step, initial_step+step, duration))
-            print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
-                train_loss, train_acc, train_prec, train_rec, train_f1
-            ))
-            print('valid-loss = %.2f, valid-acc = %.3f, valid-prec = %.2f, valid-rec = %.2f, valid-f1 = %.2f' % (
-                valid_loss, valid_acc, valid_prec, valid_rec, valid_f1
-            ))
+        except tf.errors.OutOfRangeError:
+            print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))
+        finally:
+            coord.request_stop()
 
-except tf.errors.OutOfRangeError:
-    print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))
-finally:
-    coord.request_stop()
+        coord.join(threads)
+        sess.close()
+    return
 
-coord.join(threads)
-sess.close()
+if __name__ == "__main__":
+    if (len(sys.argv)>1) and (sys.argv[1] in ("p", "predict")):
+        print("prediction")
+        outfile = "prediction.csv"
+        predict(outfile, mode="w+")
+    else:
+        print("training")
+        train()

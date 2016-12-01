@@ -13,13 +13,12 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-MODEL_ID = "eeg-conv"
+RUN_ID = "eeg-conv-bn"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
-SUMMARY_LOG = os.path.join(DATA_ROOT, "log", MODEL_ID)
-MODEL_DIR = os.path.join(DATA_ROOT, "model", MODEL_ID)
+LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
+MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
 if not os.path.exists(MODEL_DIR):
     os.mkdir(MODEL_DIR)
-CONTINUE = True
 
 # General HyperParameters
 KEEP_PROB = 0.75
@@ -188,8 +187,8 @@ def train_model():
     # Start graph & runners
     sess = tf.Session()
     merged = tf.summary.merge_all()
-    train_writer = tf.train.SummaryWriter(os.path.join(SUMMARY_LOG, 'train'), sess.graph)
-    valid_writer = tf.train.SummaryWriter(os.path.join(SUMMARY_LOG, 'test'))
+    train_writer = tf.train.SummaryWriter(os.path.join(LOG_DIR, 'train'), sess.graph)
+    valid_writer = tf.train.SummaryWriter(os.path.join(LOG_DIR, 'test'))
 
     saver = tf.train.Saver()
     init_op = tf.group(tf.global_variables_initializer(),

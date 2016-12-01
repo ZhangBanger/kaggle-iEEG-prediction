@@ -12,7 +12,7 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-RUN_ID = "eeg-conv"
+RUN_ID = "eeg-conv-bn-beta"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)

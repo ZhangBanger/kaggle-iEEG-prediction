@@ -12,7 +12,7 @@ from util import weight_variable, bias_variable, variable_summaries
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
 EVAL_BATCH = 1024
-EVAL_EVERY = 100
+EVAL_EVERY = 1
 READ_THREADS = 32
 WINDOW_SIZE = 1000
 CHANNELS = 16
@@ -131,10 +131,15 @@ def optimize(loss_op):
 
 
 def accuracy(logits, labels):
-    correct_prediction = tf.equal(
-        tf.round(tf.nn.sigmoid(logits)),
-        tf.cast(labels, tf.float32))
-    return tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+    predict_floats = tf.round(tf.nn.sigmoid(logits))
+    label_floats = tf.cast(labels, tf.float32)
+
+    raw_accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
+    true_positive = predict_floats * label_floats
+    precision = tf.reduce_sum(true_positive) / tf.reduce_sum(predict_floats)
+    recall = tf.reduce_sum(true_positive) / tf.reduce_sum(label_floats)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-6)
+    return raw_accuracy, precision, recall, f1
 
 
 # Set up training pipeline
@@ -155,7 +160,7 @@ example_valid, label_valid = input_pipeline(
 
 batch_output = inference(batch_example)
 batch_loss = loss(batch_output, batch_label)
-batch_accuracy = accuracy(batch_output, batch_label)
+batch_accuracy, batch_precision, batch_recall, batch_f1 = accuracy(batch_output, batch_label)
 
 train_step, train_op = optimize(batch_loss)
 
@@ -173,8 +178,9 @@ step = 0
 try:
     while not coord.should_stop():
         start_time = time.time()
-        _, step, train_loss, train_acc = sess.run(
-            [train_op, train_step, batch_loss, batch_accuracy],
+        _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
+            [train_op, train_step, batch_loss,
+             batch_accuracy, batch_precision, batch_recall, batch_f1],
             feed_dict={keep_prob: 0.75}
         )
         duration = time.time() - start_time
@@ -183,12 +189,17 @@ try:
             # fake_x = np.random.rand(32, WINDOW_SIZE, CHANNELS)
             # fake_y = np.random.rand(32, 1)
             valid_xs, valid_ys = sess.run([example_valid, label_valid])
-            valid_loss, valid_acc = sess.run(
-                [batch_loss, batch_accuracy],
+            valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
+                [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
                 feed_dict={batch_example: valid_xs, batch_label: valid_ys, keep_prob: 1.}
             )
-            print('Step %d: train-loss = %.2f (%.3f sec) | train-acc = %.3f || valid-loss = %.2f | valid-acc = %.3f' % (
-                step, train_loss, duration, train_acc, valid_loss, valid_acc))
+            print('Step %d (%3f sec)' % (step, duration))
+            print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
+                train_loss, train_acc, train_prec, train_rec, train_f1
+            ))
+            print('valid-loss = %.2f, valid-acc = %.3f, valid-prec = %.2f, valid-rec = %.2f, valid-f1 = %.2f' % (
+                valid_loss, valid_acc, valid_prec, valid_rec, valid_f1
+            ))
 
 except tf.errors.OutOfRangeError:
     print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))

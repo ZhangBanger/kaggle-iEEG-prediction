@@ -10,6 +10,7 @@ SUBSAMPLE_RATE = 2
 SUBSAMPLE = True
 WINDOW_SIZE = 1000
 CHANNELS = 16
+PREPROCESSED_DIR = "preprocessed"
 
 
 def mat_to_data(path):
@@ -46,27 +47,58 @@ def to_example_proto(x, label):
     )
 
 
-def from_example_proto(serialized_example, shape, filename_queue):
+def from_example_proto(serialized_example, shape):
     features = tf.parse_single_example(
         serialized_example,
         # Defaults are not specified since both keys are required.
         features={
-            'data': tf.FixedLenFeature([shape[0] * shape[1]] , tf.float32),
+            'data': tf.FixedLenFeature([shape[0] * shape[1]], tf.float32),
             'shape': tf.FixedLenFeature([2], tf.int64),
             'label': tf.FixedLenFeature([1], tf.float32),
         }
     )
     x = tf.reshape(features['data'], shape)
     label = features['label']
-    filename = np.array([42])
 
-    return x, label, filename
+    return x, label
 
 
-def write_segments(data_root, indir = "train_1"):
-    raw_folder = os.path.join(data_root, indir)
-    file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))
-    preprocessed_dir = os.path.join(data_root, "preprocessed")
+def generate_test_segment(data_root, test_folder="test"):
+    """
+        Emit preprocessed segment along with filename
+        Already chopped up and ready to send windows into feed dict
+    """
+    test_path = os.path.join(data_root, test_folder)
+    file_names = filter(lambda x: x.endswith(".mat"), os.listdir(test_path))
+
+    for file_name in file_names:
+        file_path = os.path.join(test_path, file_name)
+        data = mat_to_data(file_path)
+        segment = data["data"]
+
+        segment = normalize(segment)
+
+        if SUBSAMPLE:
+            segment = subsample(segment, channels=CHANNELS, rate=SUBSAMPLE_RATE)
+
+        num_windows = segment.shape[0] // WINDOW_SIZE
+        segment = np.reshape(segment, (num_windows, WINDOW_SIZE, CHANNELS))
+        yield segment, file_name
+
+
+def subsample_and_serialize(data_root, in_folder, out_folder):
+    """Read MatLab files, optionally attenuate and subsample, and write to TFRecords files
+
+        NOTE - place test set files in different folder than training mat files
+
+        Arguments:
+            data_root -- root folder for project's data
+            in_folder -- folder where training set .mat files are located
+            out_folder -- folder where *.train and *.valid Protobuf files will be written
+        """
+    raw_folder = os.path.join(data_root, in_folder)
+    file_names = filter(lambda file_name: file_name.endswith(".mat"), os.listdir(raw_folder))
+    preprocessed_dir = os.path.join(data_root, out_folder)
 
     if not os.path.exists(preprocessed_dir):
         os.mkdir(preprocessed_dir)
@@ -112,5 +144,8 @@ def write_segments(data_root, indir = "train_1"):
 
 
 if __name__ == '__main__':
-    data_dir = os.path.expanduser("~/data/seizure-prediction")
-    write_segments(data_dir)
+    subsample_and_serialize(
+        data_root=os.path.expanduser("~/data/seizure-prediction"),
+        in_folder="raw",
+        out_folder=PREPROCESSED_DIR,
+    )

@@ -1,39 +1,43 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.layers.python.layers import batch_norm
 from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.training.saver import latest_checkpoint
 
-from preprocess import from_example_proto
+from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_DIR
 from util import weight_variable, bias_variable, variable_summaries
-from util_tf import get_prefix
 
-"data"
-DATA_FOLDER = "~/data/seizure-prediction/preprocessed"
+# Directory Structure
+RUN_ID = "eeg-conv-pos-weight-1"
+DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
+LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
+MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
+OUTPUT_DIR = os.path.join(DATA_ROOT, "output", RUN_ID)
+if not os.path.exists(MODEL_DIR):
+    os.mkdir(MODEL_DIR)
 
-"model saving"
-MODEL_DIR = "checkpoints_conv"
-REFRESH = False
-
-"hyperparams"
+# General HyperParameters
 KEEP_PROB = 0.75
-
+LEARNING_RATE = 3e-4
+LR_DECAY = 0.9
+LR_DECAY_STEPS = 1000
 NUM_EPOCHS = 10
-BATCH_SIZE = 64
-EVAL_BATCH = 64
-EVAL_EVERY = 2
+BATCH_SIZE = 256
+EVAL_BATCH = 1024
+EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
+POSITIVE_WEIGHT = 1.
+
+# Convolutional HyperParameters
 CHANNELS = 16
 CHANNELS_L1 = 32
 CHANNELS_L2 = 4
 CHANNELS_L3 = 2
-
-# dim order:   x, y, c_in, c_out
 maxpool_ksize = [1, 2, 4, 1]
 KERNEL2 = [32, 2, 1, CHANNELS_L2]
 KERNEL3 = [8, 4, CHANNELS_L2, CHANNELS_L3]
@@ -47,16 +51,12 @@ keep_prob = tf.placeholder(tf.float32)
 def read_and_decode(filename_queue, shape):
     reader = tf.TFRecordReader()
     _, serialized_example = reader.read(filename_queue)
-    example, label, filename = from_example_proto(serialized_example, shape=shape, filename_queue=filename_queue)
+    example, label = from_example_proto(serialized_example, shape=shape)
 
-    filename  = filename_queue.dequeue()
-    #filename_hash = [int(x) for x in str(filename).split('.')[0].split('_')]
-    #if len(filename_hash) ==2:
-    #    filename_hash.append(2)
-    return example, label, filename
+    return example, label
 
 
-def train_input_pipeline(data_dir, batch_size, read_threads, train=True):
+def input_pipeline(data_dir, batch_size, read_threads, train=True):
     file_suffix = ".train" if train else ".valid"
     filename_list = list(
         map(
@@ -77,43 +77,16 @@ def train_input_pipeline(data_dir, batch_size, read_threads, train=True):
         capacity=capacity,
         min_after_dequeue=min_after_dequeue,
         allow_smaller_final_batch=True,
-        )
-
-def validation_input_pipeline(data_dir, batch_size, read_threads, train=False):
-    file_suffix = ".train" if train else ".valid"
-    filename_list = list(
-        map(
-            lambda filename: os.path.join(data_dir, filename),
-            filter(lambda filename: filename.endswith(file_suffix), os.listdir(data_dir))
-        )
     )
-    num_epochs = NUM_EPOCHS if train else None
-    #print(*filename_list[:10], sep="\n")
-    #print(*filename_list[-10:], sep="\n")
-    filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
-    shape = (WINDOW_SIZE, CHANNELS)
-    example_list = []
-    for _ in range(read_threads):
-        example_list.append(read_and_decode(filename_queue, shape) )
-        #example_list[-1][-1] =  tf.string_to_number()
-    print("example_list", len(example_list))
-
-    min_after_dequeue = read_threads * batch_size // 8
-    capacity = min_after_dequeue + (read_threads + 2) * batch_size
-    #shapes=[shape, [1], [1]],
-    return tf.train.batch_join(example_list, batch_size, capacity=32,
-              enqueue_many=False,  dynamic_pad=False,
-              allow_smaller_final_batch=False, shared_name=None, name=None)
 
 
-
-def inference(x):
+def inference(x, is_training=True):
     with tf.variable_scope("layer1"):
         filter_weights = weight_variable([1, CHANNELS, CHANNELS_L1], name="weights")
         feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
         activation = tf.reshape(activation, [-1, CHANNELS_L1, WINDOW_SIZE, 1])
 
@@ -121,9 +94,9 @@ def inference(x):
         filter_weights = weight_variable(KERNEL2, name="weights")
         feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1, 1, 1, 1], padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
 
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
                                     data_format='NHWC', name='maxpool')
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
@@ -132,9 +105,9 @@ def inference(x):
         filter_weights = weight_variable(KERNEL3, name="weights")
         feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1, 1, 1, 1], padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
 
-        activation = tf.nn.elu(feature_map + bias_variable(feature_map.get_shape()[1:]))
+        activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
                                     data_format='NHWC', name='maxpool')
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
@@ -151,10 +124,11 @@ def inference(x):
 
 def loss(logits, y_):
     cross_entropy = tf.reduce_mean(
-        tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=3.)
+        tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=POSITIVE_WEIGHT)
     )
+    tf.scalar_summary("loss", cross_entropy)
 
-    "add batch norm"
+    # Include batch norm as dependency so parameters can update
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     if update_ops:
         updates = tf.group(*update_ops)
@@ -164,64 +138,67 @@ def loss(logits, y_):
 
 
 def optimize(loss_op):
-    optimizer = tf.train.AdamOptimizer(3e-4)
+    global_step = tf.Variable(0, name='global_step', trainable=False)
+    learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step,
+                                               LR_DECAY_STEPS, LR_DECAY, staircase=True)
+    optimizer = tf.train.AdamOptimizer(learning_rate)
     grads_and_vars = optimizer.compute_gradients(loss_op)
     for grad, trainable_var in grads_and_vars:
         variable_summaries(grad)
         variable_summaries(trainable_var)
-    global_step = tf.Variable(0, name='global_step', trainable=False)
     return global_step, optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
 
 def evaluation(logits, labels):
-    predict_floats = tf.round(tf.nn.sigmoid(logits))
+    predict_floats = tf.round(tf.nn.sigmoid(logits), name="predictions")
+    variable_summaries(predict_floats)
     label_floats = tf.cast(labels, tf.float32)
 
-    raw_accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
-    true_positive = predict_floats * label_floats
-    precision = tf.reduce_sum(true_positive) / tf.reduce_sum(predict_floats)
-    recall = tf.reduce_sum(true_positive) / tf.reduce_sum(label_floats)
-    f1 = 2 * (precision * recall) / (precision + recall + 1e-6)
-    return raw_accuracy, precision, recall, f1
+    accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
+    tf.scalar_summary("accuracy", accuracy)
+    auc, update_auc = tf.contrib.metrics.streaming_auc(predict_floats, label_floats)
+    tf.scalar_summary("auc", auc)
+
+    return accuracy, auc, update_auc
 
 
-DATA_FOLDER = os.path.expanduser(DATA_FOLDER)
-
-def train():
+def train_model():
+    input_folder = os.path.join(DATA_ROOT, PREPROCESSED_DIR)
     # Set up training pipeline
-    valid_predictors, label_valid = train_input_pipeline(
-        data_dir=DATA_FOLDER,
+    valid_predictors, valid_label = input_pipeline(
+        data_dir=input_folder,
         batch_size=EVAL_BATCH,
         read_threads=READ_THREADS,
         train=False
     )
 
-    batch_predictors, batch_label = train_input_pipeline(
-        data_dir=DATA_FOLDER,
+    train_predictors, train_label = input_pipeline(
+        data_dir=input_folder,
         batch_size=BATCH_SIZE,
         read_threads=READ_THREADS,
     )
 
-    batch_logits = inference(batch_predictors)
-    batch_loss = loss(batch_logits, batch_label)
-    batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_logits, batch_label)
+    batch_logits = inference(train_predictors)
+    batch_loss = loss(batch_logits, train_label)
+    batch_accuracy, batch_auc, update_auc = evaluation(batch_logits, train_label)
 
     train_step, train_op = optimize(batch_loss)
 
     # Start graph & runners
     sess = tf.Session()
+    merged = tf.summary.merge_all()
+    train_writer = tf.train.SummaryWriter(os.path.join(LOG_DIR, 'train'), sess.graph)
+    valid_writer = tf.train.SummaryWriter(os.path.join(LOG_DIR, 'test'))
 
+    saver = tf.train.Saver()
     init_op = tf.group(tf.global_variables_initializer(),
                        tf.local_variables_initializer())
     sess.run(init_op)
 
-    saver = tf.train.Saver()
-    if not REFRESH:
-        checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc = True)
-        print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
+    if latest_checkpoint(MODEL_DIR):
+        checkpoint_file = latest_checkpoint(MODEL_DIR)
+        print("Restoring the model from most recent checkpoint:\t%s" % checkpoint_file)
         saver.restore(sess, checkpoint_file)
-    else:
-        initial_step = 0
 
     coord = tf.train.Coordinator()
     threads = tf.train.start_queue_runners(sess=sess, coord=coord)
@@ -231,28 +208,31 @@ def train():
     try:
         while not coord.should_stop():
             start_time = time.time()
-            _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
-                [train_op, train_step, batch_loss,
-                 batch_accuracy, batch_precision, batch_recall, batch_f1],
+            _, train_summary, step, train_loss, train_acc, train_auc, _ = sess.run(
+                [train_op, merged, train_step, batch_loss, batch_accuracy, batch_auc, update_auc],
                 feed_dict={keep_prob: KEEP_PROB}
             )
+            train_writer.add_summary(train_summary, step)
             duration = time.time() - start_time
 
             if step % EVAL_EVERY == 0:
-                valid_xs, valid_ys = sess.run([valid_predictors, label_valid])
-                valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
-                    [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
-                    feed_dict={batch_predictors: valid_xs, batch_label: valid_ys, keep_prob: 1.}
-                    )
-                chkpt_file = MODEL_DIR + "/" + "step_%u.val_acc_%u" % \
-                                    (initial_step+step, int(1000*valid_acc))
-                save_path = saver.save(sess, chkpt_file)
-                print('Step %d (with previous: %d) (%3f sec)' % (step, initial_step+step, duration))
-                print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
-                    train_loss, train_acc, train_prec, train_rec, train_f1
+                valid_xs, valid_ys = sess.run([valid_predictors, valid_label])
+                valid_summary, valid_loss, valid_acc, valid_auc, _ = sess.run(
+                    [merged, batch_loss, batch_accuracy, batch_auc, update_auc],
+                    feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
+                )
+                valid_writer.add_summary(valid_summary, step)
+                checkpoint_file = os.path.join(
+                    MODEL_DIR,
+                    "val_auc_%u" % int(1000 * valid_auc)
+                )
+                saver.save(sess, checkpoint_file, global_step=step)
+                print('Step %d (%3f sec)' % (step, duration))
+                print('train-loss = %.2f, train-acc = %.3f, train-auc = %.2f' % (
+                    train_loss, train_acc, train_auc
                 ))
-                print('valid-loss = %.2f, valid-acc = %.3f, valid-prec = %.2f, valid-rec = %.2f, valid-f1 = %.2f' % (
-                    valid_loss, valid_acc, valid_prec, valid_rec, valid_f1
+                print('valid-loss = %.2f, valid-acc = %.3f, valid-auc = %.2f' % (
+                    valid_loss, valid_acc, valid_auc
                 ))
 
     except tf.errors.OutOfRangeError:
@@ -264,66 +244,39 @@ def train():
     sess.close()
     return
 
-def get_file_name_for_table(ff, mat = True):
-    ff = ff.decode("ascii").split("/")[-1].split(".")[0]
-    return ff + ".mat"
 
-def predict(outfile, SEP="\t", mode = "w+"):
+def predict(output_path, separator=",", mode="w+"):
+    print("Setting up inference subgraph")
+    predict_input = tf.placeholder(dtype=tf.float32, shape=[None, WINDOW_SIZE, CHANNELS])
+    batch_logits = inference(predict_input, is_training=False)
+    predicted_probabilities = tf.nn.sigmoid(batch_logits)
+    mean_prediction = tf.reduce_mean(predicted_probabilities)
 
-    valid_predictors, label_valid, file_valid = validation_input_pipeline(
-        data_dir=DATA_FOLDER,
-        batch_size=EVAL_BATCH,
-        read_threads=READ_THREADS,
-        train=False
-    )
-    batch_logits = inference(valid_predictors)
-    # Start graph & runners
+    print("Restoring model from training with best validation accuracy")
     sess = tf.Session()
-
-    init_op = tf.group(tf.global_variables_initializer(),
-                       tf.local_variables_initializer())
-    sess.run(init_op)
-
     saver = tf.train.Saver()
-    checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc = True)
+    checkpoint_file = latest_checkpoint(MODEL_DIR)
     print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
     saver.restore(sess, checkpoint_file)
 
-    coord = tf.train.Coordinator()
-    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-
     print("Predicting")
-    with open(outfile, mode=mode) as outfilehandle:
-        print( "prediction_file", "predicted_label", file=outfilehandle, sep=SEP)
-        step = 0
-        try:
-            while not coord.should_stop():
-                step +=1
-                start_time = time.time()
-                prediction_file, predicted_label = sess.run([ file_valid, batch_logits],
-                    feed_dict={ keep_prob: 1.}
-                                                           )
-                duration = time.time() - start_time
-                print("prediction batch %u (%.2f s)" %(step, duration))
-                for ff, logit_ in zip(prediction_file.ravel(), predicted_label.ravel()):
-                    probability = 1/(1+np.exp(-logit_))
-                    print(get_file_name_for_table(ff), "%.6f" % probability,
-                          file=outfilehandle, sep=SEP)
+    with open(output_path, mode=mode) as file_stream:
+        print("File", "Class", file=file_stream, sep=separator)
+        for segment, file_name in generate_test_segment(DATA_ROOT, "test"):
+            predicted_probability = sess.run(mean_prediction, feed_dict={predict_input: segment, keep_prob: 1.})
+            print(file_name, predicted_probability, sep=separator, file=file_stream)
 
-        except tf.errors.OutOfRangeError:
-            print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))
-        finally:
-            coord.request_stop()
-
-        coord.join(threads)
-        sess.close()
-    return
 
 if __name__ == "__main__":
-    if (len(sys.argv)>1) and (sys.argv[1] in ("p", "predict")):
-        print("prediction")
-        outfile = "prediction.csv"
-        predict(outfile, mode="w+")
+    flags = tf.app.flags
+    FLAGS = flags.FLAGS
+    flags.DEFINE_bool('predict', False, 'Run prediction or train [default]')
+    if FLAGS.predict:
+        output_file = "prediction.csv"
+        if not os.path.exists(OUTPUT_DIR):
+            os.mkdir(OUTPUT_DIR)
+
+        predict(os.path.join(OUTPUT_DIR, output_file), mode="w+")
     else:
         print("training")
-        train()
+        train_model()

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 
 import numpy as np
@@ -13,10 +12,11 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-RUN_ID = "eeg-conv-bn"
+RUN_ID = "eeg-conv"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
+OUTPUT_DIR = os.path.join(DATA_ROOT, "output", RUN_ID)
 if not os.path.exists(MODEL_DIR):
     os.mkdir(MODEL_DIR)
 
@@ -80,12 +80,12 @@ def input_pipeline(data_dir, batch_size, read_threads, train=True):
     )
 
 
-def inference(x):
+def inference(x, is_training=True):
     with tf.variable_scope("layer1"):
         filter_weights = weight_variable([1, CHANNELS, CHANNELS_L1], name="weights")
         feature_map = tf.nn.conv1d(x, filter_weights, stride=1, padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
         activation = tf.nn.elu(feature_map)
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
         activation = tf.reshape(activation, [-1, CHANNELS_L1, WINDOW_SIZE, 1])
@@ -94,7 +94,7 @@ def inference(x):
         filter_weights = weight_variable(KERNEL2, name="weights")
         feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1, 1, 1, 1], padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
 
         activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
@@ -105,7 +105,7 @@ def inference(x):
         filter_weights = weight_variable(KERNEL3, name="weights")
         feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1, 1, 1, 1], padding='SAME')
         feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
-                                 epsilon=epsilon_bn, activation_fn=None)
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
 
         activation = tf.nn.elu(feature_map)
         activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
@@ -222,11 +222,11 @@ def train_model():
                     feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
                 )
                 valid_writer.add_summary(valid_summary, step)
-                chkpt_file = os.path.join(
+                checkpoint_file = os.path.join(
                     MODEL_DIR,
                     "val_auc_%u" % int(1000 * valid_auc)
                 )
-                saver.save(sess, chkpt_file, global_step=step)
+                saver.save(sess, checkpoint_file, global_step=step)
                 print('Step %d (%3f sec)' % (step, duration))
                 print('train-loss = %.2f, train-acc = %.3f, train-auc = %.2f' % (
                     train_loss, train_acc, train_auc
@@ -245,10 +245,10 @@ def train_model():
     return
 
 
-def predict(output_file, separator=",", mode="w+"):
+def predict(output_path, separator=",", mode="w+"):
     print("Setting up inference subgraph")
-    predict_input = tf.placeholder(dtype=float, shape=[None, WINDOW_SIZE, CHANNELS])
-    batch_logits = inference(predict_input)
+    predict_input = tf.placeholder(dtype=tf.float32, shape=[None, WINDOW_SIZE, CHANNELS])
+    batch_logits = inference(predict_input, is_training=False)
     predicted_probabilities = tf.nn.sigmoid(batch_logits)
     mean_prediction = tf.reduce_mean(predicted_probabilities)
 
@@ -260,17 +260,23 @@ def predict(output_file, separator=",", mode="w+"):
     saver.restore(sess, checkpoint_file)
 
     print("Predicting")
-    with open(output_file, mode=mode) as file_stream:
+    with open(output_path, mode=mode) as file_stream:
         print("File", "Class", file=file_stream, sep=separator)
         for segment, file_name in generate_test_segment(DATA_ROOT, "test"):
-            predicted_probability = sess.run(mean_prediction, feed_dict={predict_input: segment})
+            predicted_probability = sess.run(mean_prediction, feed_dict={predict_input: segment, keep_prob: 1.})
             print(file_name, predicted_probability, sep=separator, file=file_stream)
 
 
 if __name__ == "__main__":
-    if (len(sys.argv) > 1) and (sys.argv[1] in ("p", "predict")):
-        outfile = "prediction.csv"
-        predict(outfile, mode="w+")
+    flags = tf.app.flags
+    FLAGS = flags.FLAGS
+    flags.DEFINE_bool('predict', False, 'Run prediction or train [default]')
+    if FLAGS.predict:
+        output_file = "prediction.csv"
+        if not os.path.exists(OUTPUT_DIR):
+            os.mkdir(OUTPUT_DIR)
+
+        predict(os.path.join(OUTPUT_DIR, output_file), mode="w+")
     else:
         print("training")
         train_model()

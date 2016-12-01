@@ -97,7 +97,7 @@ def subsample_and_serialize(data_root, in_folder, out_folder):
             out_folder -- folder where *.train and *.valid Protobuf files will be written
         """
     raw_folder = os.path.join(data_root, in_folder)
-    file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))
+    file_names = filter(lambda file_name: file_name.endswith(".mat"), os.listdir(raw_folder))
     preprocessed_dir = os.path.join(data_root, out_folder)
 
     if not os.path.exists(preprocessed_dir):

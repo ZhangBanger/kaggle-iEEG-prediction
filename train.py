@@ -12,7 +12,7 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-RUN_ID = "eeg-conv-pos-weight-1"
+RUN_ID = "eeg-conv-pos-weight-9"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
@@ -31,7 +31,7 @@ EVAL_BATCH = 1024
 EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
-POSITIVE_WEIGHT = 1.
+POSITIVE_WEIGHT = 9.
 
 # Convolutional HyperParameters
 CHANNELS = 16

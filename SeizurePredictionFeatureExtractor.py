@@ -187,9 +187,11 @@ with pd.HDFStore("features_train1.h5") as st:
     print("todo files:" , len(infiles))
     for file_name in tqdm(infiles):
         file_name = os.path.join(indir, file_name)
-        features = calculate_features(file_name)
+        try:
+            features = calculate_features(file_name)
+        except:
+            print("failed to get features from", file_name, file=sys.stderr)
         df = pd.DataFrame(features, index=["epoch_%u" %x for x in range(features.shape[0])])
         label = os.path.basename(file_name)
-        print(file_name)
         st[label] = df
 

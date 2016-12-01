@@ -154,9 +154,9 @@ def evaluation(logits, labels):
     label_floats = tf.cast(labels, tf.float32)
 
     accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
-    auc = tf.contrib.metrics.streaming_auc(predict_floats, label_floats)
+    auc, update_auc = tf.contrib.metrics.streaming_auc(predict_floats, label_floats)
 
-    return accuracy, auc
+    return accuracy, auc, update_auc
 
 
 def train():
@@ -177,7 +177,7 @@ def train():
 
     batch_logits = inference(train_predictors)
     batch_loss = loss(batch_logits, train_label)
-    batch_accuracy, batch_auc = evaluation(batch_logits, train_label)
+    batch_accuracy, batch_auc, update_auc = evaluation(batch_logits, train_label)
 
     train_step, train_op = optimize(batch_loss)
 
@@ -204,16 +204,16 @@ def train():
     try:
         while not coord.should_stop():
             start_time = time.time()
-            _, step, train_loss, train_acc, train_auc = sess.run(
-                [train_op, train_step, batch_loss, batch_accuracy, batch_auc],
+            _, step, train_loss, train_acc, train_auc, _ = sess.run(
+                [train_op, train_step, batch_loss, batch_accuracy, batch_auc, update_auc],
                 feed_dict={keep_prob: KEEP_PROB}
             )
             duration = time.time() - start_time
 
             if step % EVAL_EVERY == 0:
                 valid_xs, valid_ys = sess.run([valid_predictors, valid_label])
-                valid_loss, valid_acc, valid_auc = sess.run(
-                    [batch_loss, batch_accuracy, batch_auc],
+                valid_loss, valid_acc, valid_auc, _ = sess.run(
+                    [batch_loss, batch_accuracy, batch_auc, update_auc],
                     feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
                 )
                 chkpt_file = os.path.join(

@@ -46,24 +46,32 @@ def to_example_proto(x, label):
     )
 
 
-def from_example_proto(serialized_example, shape, filename_queue):
+def from_example_proto(serialized_example, shape):
     features = tf.parse_single_example(
         serialized_example,
         # Defaults are not specified since both keys are required.
         features={
-            'data': tf.FixedLenFeature([shape[0] * shape[1]] , tf.float32),
+            'data': tf.FixedLenFeature([shape[0] * shape[1]], tf.float32),
             'shape': tf.FixedLenFeature([2], tf.int64),
             'label': tf.FixedLenFeature([1], tf.float32),
         }
     )
     x = tf.reshape(features['data'], shape)
     label = features['label']
-    filename = np.array([42])
 
-    return x, label, filename
+    return x, label
 
 
-def write_segments(data_root, in_folder, out_folder):
+def subsample_and_serialize(data_root, in_folder, out_folder):
+    """Read MatLab files, optionally attenuate and subsample, and write to TFRecords files
+
+        NOTE - place test set files in different folder than training mat files
+
+        Arguments:
+            data_root -- root folder for project's data
+            in_folder -- folder where training set .mat files are located
+            out_folder -- folder where *.train and *.valid Protobuf files will be written
+        """
     raw_folder = os.path.join(data_root, in_folder)
     file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))
     preprocessed_dir = os.path.join(data_root, out_folder)
@@ -112,7 +120,7 @@ def write_segments(data_root, in_folder, out_folder):
 
 
 if __name__ == '__main__':
-    write_segments(
+    subsample_and_serialize(
         data_root=os.path.expanduser("~/data/seizure-prediction"),
         in_folder="raw",
         out_folder="preprocessed",

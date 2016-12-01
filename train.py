@@ -186,8 +186,6 @@ try:
         duration = time.time() - start_time
 
         if step % EVAL_EVERY == 0:
-            # fake_x = np.random.rand(32, WINDOW_SIZE, CHANNELS)
-            # fake_y = np.random.rand(32, 1)
             valid_xs, valid_ys = sess.run([example_valid, label_valid])
             valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
                 [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],

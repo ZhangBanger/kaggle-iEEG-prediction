@@ -8,18 +8,21 @@ import tensorflow as tf
 from tensorflow.contrib.layers.python.layers import batch_norm
 from tensorflow.python.ops import control_flow_ops
 
-from preprocess import from_example_proto
+from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_DIR
 from util import weight_variable, bias_variable, variable_summaries
 from util_tf import get_prefix
 
-"data"
-DATA_FOLDER = "~/data/seizure-prediction/preprocessed"
+# data
+DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 
-"model saving"
-MODEL_DIR = "checkpoints_conv"
-REFRESH = False
+# Checkpoint Config
+MODEL_ID = "eeg-conv"
+MODEL_DIR = os.path.join(DATA_ROOT, "model", MODEL_ID)
+if not os.path.exists(MODEL_DIR):
+    os.mkdir(MODEL_DIR)
+CONTINUE = False
 
-"hyperparams"
+# General HyperParameters
 KEEP_PROB = 0.75
 
 NUM_EPOCHS = 10
@@ -28,12 +31,12 @@ EVAL_BATCH = 1024
 EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
+
+# Convolutional HyperParameters
 CHANNELS = 16
 CHANNELS_L1 = 32
 CHANNELS_L2 = 4
 CHANNELS_L3 = 2
-
-# dim order:   x, y, c_in, c_out
 maxpool_ksize = [1, 2, 4, 1]
 KERNEL2 = [32, 2, 1, CHANNELS_L2]
 KERNEL3 = [8, 4, CHANNELS_L2, CHANNELS_L3]
@@ -49,14 +52,10 @@ def read_and_decode(filename_queue, shape):
     _, serialized_example = reader.read(filename_queue)
     example, label = from_example_proto(serialized_example, shape=shape)
 
-    filename = filename_queue.dequeue()
-    # filename_hash = [int(x) for x in str(filename).split('.')[0].split('_')]
-    # if len(filename_hash) ==2:
-    #    filename_hash.append(2)
-    return example, label, filename
+    return example, label
 
 
-def train_input_pipeline(data_dir, batch_size, read_threads, train=True):
+def input_pipeline(data_dir, batch_size, read_threads, train=True):
     file_suffix = ".train" if train else ".valid"
     filename_list = list(
         map(
@@ -78,33 +77,6 @@ def train_input_pipeline(data_dir, batch_size, read_threads, train=True):
         min_after_dequeue=min_after_dequeue,
         allow_smaller_final_batch=True,
     )
-
-
-def validation_input_pipeline(data_dir, batch_size, read_threads, train=False):
-    file_suffix = ".train" if train else ".valid"
-    filename_list = list(
-        map(
-            lambda filename: os.path.join(data_dir, filename),
-            filter(lambda filename: filename.endswith(file_suffix), os.listdir(data_dir))
-        )
-    )
-    num_epochs = NUM_EPOCHS if train else None
-    # print(*filename_list[:10], sep="\n")
-    # print(*filename_list[-10:], sep="\n")
-    filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
-    shape = (WINDOW_SIZE, CHANNELS)
-    example_list = []
-    for _ in range(read_threads):
-        example_list.append(read_and_decode(filename_queue, shape))
-        # example_list[-1][-1] =  tf.string_to_number()
-    print("example_list", len(example_list))
-
-    min_after_dequeue = read_threads * batch_size // 8
-    capacity = min_after_dequeue + (read_threads + 2) * batch_size
-    # shapes=[shape, [1], [1]],
-    return tf.train.batch_join(example_list, batch_size, capacity=32,
-                               enqueue_many=False, dynamic_pad=False,
-                               allow_smaller_final_batch=False, shared_name=None, name=None)
 
 
 def inference(x):
@@ -154,7 +126,7 @@ def loss(logits, y_):
         tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=3.)
     )
 
-    "add batch norm"
+    # Include batch norm as dependency so parameters can update
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     if update_ops:
         updates = tf.group(*update_ops)
@@ -185,27 +157,25 @@ def evaluation(logits, labels):
     return raw_accuracy, precision, recall, f1
 
 
-DATA_FOLDER = os.path.expanduser(DATA_FOLDER)
-
-
 def train():
+    input_folder = os.path.join(DATA_ROOT, PREPROCESSED_DIR)
     # Set up training pipeline
-    valid_predictors, label_valid = train_input_pipeline(
-        data_dir=DATA_FOLDER,
+    valid_predictors, valid_label = input_pipeline(
+        data_dir=input_folder,
         batch_size=EVAL_BATCH,
         read_threads=READ_THREADS,
         train=False
     )
 
-    batch_predictors, batch_label = train_input_pipeline(
-        data_dir=DATA_FOLDER,
+    train_predictors, train_label = input_pipeline(
+        data_dir=input_folder,
         batch_size=BATCH_SIZE,
         read_threads=READ_THREADS,
     )
 
-    batch_logits = inference(batch_predictors)
-    batch_loss = loss(batch_logits, batch_label)
-    batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_logits, batch_label)
+    batch_logits = inference(train_predictors)
+    batch_loss = loss(batch_logits, train_label)
+    batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_logits, train_label)
 
     train_step, train_op = optimize(batch_loss)
 
@@ -217,12 +187,12 @@ def train():
     sess.run(init_op)
 
     saver = tf.train.Saver()
-    if not REFRESH:
-        checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc=True)
-        print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
+    if CONTINUE:
+        checkpoint_file, global_step_offset = get_prefix(MODEL_DIR, by_accuracy=False)
+        print("Restoring the model from most recent checkpoint:\t%s" % checkpoint_file)
         saver.restore(sess, checkpoint_file)
     else:
-        initial_step = 0
+        global_step_offset = 0
 
     coord = tf.train.Coordinator()
     threads = tf.train.start_queue_runners(sess=sess, coord=coord)
@@ -240,15 +210,17 @@ def train():
             duration = time.time() - start_time
 
             if step % EVAL_EVERY == 0:
-                valid_xs, valid_ys = sess.run([valid_predictors, label_valid])
+                valid_xs, valid_ys = sess.run([valid_predictors, valid_label])
                 valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
                     [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
-                    feed_dict={batch_predictors: valid_xs, batch_label: valid_ys, keep_prob: 1.}
+                    feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
                 )
-                chkpt_file = MODEL_DIR + "/" + "step_%u.val_acc_%u" % \
-                                               (initial_step + step, int(1000 * valid_acc))
-                save_path = saver.save(sess, chkpt_file)
-                print('Step %d (with previous: %d) (%3f sec)' % (step, initial_step + step, duration))
+                chkpt_file = os.path.join(
+                    MODEL_DIR,
+                    "step_%u.val_acc_%u" % (global_step_offset + step, int(1000 * valid_acc))
+                )
+                saver.save(sess, chkpt_file)
+                print('Step %d (with previous: %d) (%3f sec)' % (step, global_step_offset + step, duration))
                 print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
                     train_loss, train_acc, train_prec, train_rec, train_f1
                 ))
@@ -266,66 +238,31 @@ def train():
     return
 
 
-def get_file_name_for_table(ff, mat=True):
-    ff = ff.decode("ascii").split("/")[-1].split(".")[0]
-    return ff + ".mat"
+def predict(output_file, separator=",", mode="w+"):
+    print("Setting up inference subgraph")
+    predict_input = tf.placeholder(dtype=float, shape=[None, WINDOW_SIZE, CHANNELS])
+    batch_logits = inference(predict_input)
+    predicted_probabilities = tf.nn.softmax(batch_logits)
+    mean_prediction = tf.reduce_mean(predicted_probabilities)
 
-
-def predict(outfile, SEP="\t", mode="w+"):
-    valid_predictors, label_valid, file_valid = validation_input_pipeline(
-        data_dir=DATA_FOLDER,
-        batch_size=EVAL_BATCH,
-        read_threads=READ_THREADS,
-        train=False
-    )
-    batch_logits = inference(valid_predictors)
-    # Start graph & runners
-    sess = tf.Session()
-
-    init_op = tf.group(tf.global_variables_initializer(),
-                       tf.local_variables_initializer())
-    sess.run(init_op)
-
+    print("Restoring model from training with best validation accuracy")
     saver = tf.train.Saver()
-    checkpoint_file, initial_step = get_prefix(MODEL_DIR, byacc=True)
+    checkpoint_file, initial_step = get_prefix(MODEL_DIR, by_accuracy=True)
     print("Restoring the model from a checkpoint:\t%s" % checkpoint_file)
     saver.restore(sess, checkpoint_file)
 
-    coord = tf.train.Coordinator()
-    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-
     print("Predicting")
-    with open(outfile, mode=mode) as outfilehandle:
-        print("prediction_file", "predicted_label", file=outfilehandle, sep=SEP)
-        step = 0
-        try:
-            while not coord.should_stop():
-                step += 1
-                start_time = time.time()
-                prediction_file, predicted_label = sess.run([file_valid, batch_logits],
-                                                            feed_dict={keep_prob: 1.}
-                                                            )
-                duration = time.time() - start_time
-                print("prediction batch %u (%.2f s)" % (step, duration))
-                for ff, logit_ in zip(prediction_file.ravel(), predicted_label.ravel()):
-                    probability = 1 / (1 + np.exp(-logit_))
-                    print(get_file_name_for_table(ff), "%.6f" % probability,
-                          file=outfilehandle, sep=SEP)
-
-        except tf.errors.OutOfRangeError:
-            print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))
-        finally:
-            coord.request_stop()
-
-        coord.join(threads)
-        sess.close()
-    return
+    with open(output_file, mode=mode) as file_stream:
+        print("File", "Class", file=file_stream, sep=separator)
+        for segment, file_name in generate_test_segment(DATA_ROOT, "test"):
+            predicted_probability = sess.run(mean_prediction, feed_dict={predict_input: segment})
+            print(file_name, predicted_probability, sep=separator, file=file_stream)
 
 
 if __name__ == "__main__":
     if (len(sys.argv) > 1) and (sys.argv[1] in ("p", "predict")):
-        print("prediction")
         outfile = "prediction.csv"
+        print("Writing predictions to file", outfile)
         predict(outfile, mode="w+")
     else:
         print("training")

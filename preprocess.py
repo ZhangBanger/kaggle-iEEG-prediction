@@ -10,6 +10,7 @@ SUBSAMPLE_RATE = 2
 SUBSAMPLE = True
 WINDOW_SIZE = 1000
 CHANNELS = 16
+PREPROCESSED_DIR = "preprocessed"
 
 
 def mat_to_data(path):
@@ -146,5 +147,5 @@ if __name__ == '__main__':
     subsample_and_serialize(
         data_root=os.path.expanduser("~/data/seizure-prediction"),
         in_folder="raw",
-        out_folder="preprocessed",
+        out_folder=PREPROCESSED_DIR,
     )

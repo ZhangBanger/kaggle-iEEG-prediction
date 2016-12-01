@@ -61,8 +61,8 @@ def from_example_proto(serialized_example, shape):
     return x, label
 
 
-def write_segments(data_root):
-    raw_folder = os.path.join(data_root, "raw")
+def write_segments(data_root, indir = "train_1"):
+    raw_folder = os.path.join(data_root, indir)
     file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))
     preprocessed_dir = os.path.join(data_root, "preprocessed")
 

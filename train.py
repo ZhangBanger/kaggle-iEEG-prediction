@@ -11,6 +11,8 @@ from util import weight_variable, bias_variable, variable_summaries
 
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
+EVAL_BATCH = 1024
+EVAL_EVERY = 100
 READ_THREADS = 32
 WINDOW_SIZE = 1000
 CHANNELS = 16
@@ -125,27 +127,37 @@ def optimize(loss_op):
         variable_summaries(grad)
         variable_summaries(trainable_var)
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    return optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
+    return global_step, optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
 
-def accuracy(predictions, labels):
-    correct_prediction = tf.equal(tf.argmax(predictions, 1), tf.argmax(labels, 1))
+def accuracy(logits, labels):
+    correct_prediction = tf.equal(
+        tf.round(tf.nn.sigmoid(logits)),
+        tf.cast(labels, tf.float32))
     return tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
 
 # Set up training pipeline
 preprocessed_data_folder = os.path.expanduser("~/data/seizure-prediction/preprocessed")
 
-example_batch, label_batch = input_pipeline(
+batch_example, batch_label = input_pipeline(
     data_dir=preprocessed_data_folder,
     batch_size=BATCH_SIZE,
     read_threads=READ_THREADS,
 )
 
-train_logits = inference(example_batch)
-train_loss = loss(train_logits, label_batch)
-train_step = optimize(train_loss)
-train_accuracy = accuracy(train_logits, label_batch)
+example_valid, label_valid = input_pipeline(
+    data_dir=preprocessed_data_folder,
+    batch_size=EVAL_BATCH,
+    read_threads=READ_THREADS,
+    train=False
+)
+
+batch_output = inference(batch_example)
+batch_loss = loss(batch_output, batch_label)
+batch_accuracy = accuracy(batch_output, batch_label)
+
+train_step, train_op = optimize(batch_loss)
 
 # Start graph & runners
 sess = tf.Session()
@@ -158,17 +170,25 @@ threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
 # Training Loop
 step = 0
-
 try:
     while not coord.should_stop():
         start_time = time.time()
-        _, loss_value, train_acc = sess.run([train_step, train_loss, train_accuracy],
-                                            feed_dict={keep_prob: 0.75})
+        _, step, train_loss, train_acc = sess.run(
+            [train_op, train_step, batch_loss, batch_accuracy],
+            feed_dict={keep_prob: 0.75}
+        )
         duration = time.time() - start_time
 
-        if step % 1 == 0:
-            print('Step %d: loss = %.2f (%.3f sec) | acc = %.3f' % (step, loss_value, duration, train_acc))
-        step += 1
+        if step % EVAL_EVERY == 0:
+            # fake_x = np.random.rand(32, WINDOW_SIZE, CHANNELS)
+            # fake_y = np.random.rand(32, 1)
+            valid_xs, valid_ys = sess.run([example_valid, label_valid])
+            valid_loss, valid_acc = sess.run(
+                [batch_loss, batch_accuracy],
+                feed_dict={batch_example: valid_xs, batch_label: valid_ys, keep_prob: 1.}
+            )
+            print('Step %d: train-loss = %.2f (%.3f sec) | train-acc = %.3f || valid-loss = %.2f | valid-acc = %.3f' % (
+                step, train_loss, duration, train_acc, valid_loss, valid_acc))
 
 except tf.errors.OutOfRangeError:
     print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))

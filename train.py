@@ -12,7 +12,7 @@ from util import weight_variable, bias_variable, variable_summaries
 NUM_EPOCHS = 10
 BATCH_SIZE = 64
 EVAL_BATCH = 1024
-EVAL_EVERY = 1
+EVAL_EVERY = 100
 READ_THREADS = 32
 WINDOW_SIZE = 1000
 CHANNELS = 16

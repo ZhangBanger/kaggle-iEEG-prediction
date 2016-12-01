@@ -12,7 +12,7 @@ from preprocess import from_example_proto, generate_test_segment, PREPROCESSED_D
 from util import weight_variable, bias_variable, variable_summaries
 
 # Directory Structure
-RUN_ID = "eeg-conv-pos-weight-9"
+RUN_ID = "eeg-net-deep"
 DATA_ROOT = os.path.expanduser("~/data/seizure-prediction")
 LOG_DIR = os.path.join(DATA_ROOT, "log", RUN_ID)
 MODEL_DIR = os.path.join(DATA_ROOT, "model", RUN_ID)
@@ -27,7 +27,7 @@ LR_DECAY = 0.9
 LR_DECAY_STEPS = 1000
 NUM_EPOCHS = 10
 BATCH_SIZE = 256
-EVAL_BATCH = 1024
+EVAL_BATCH = 512
 EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
@@ -41,6 +41,7 @@ CHANNELS_L3 = 2
 maxpool_ksize = [1, 2, 4, 1]
 KERNEL2 = [32, 2, 1, CHANNELS_L2]
 KERNEL3 = [8, 4, CHANNELS_L2, CHANNELS_L3]
+KERNEL_DEEP = [2, 16, CHANNELS_L3, CHANNELS_L3]
 scale_bn = False
 decay_bn = 0.999
 epsilon_bn = 0.001
@@ -113,6 +114,17 @@ def inference(x, is_training=True):
         activation = tf.nn.dropout(activation, keep_prob=keep_prob)
 
     with tf.variable_scope("layer4"):
+        filter_weights = weight_variable(KERNEL_DEEP, name="weights")
+        feature_map = tf.nn.conv2d(activation, filter_weights, strides=[1, 1, 1, 1], padding='SAME')
+        feature_map = batch_norm(feature_map, decay=decay_bn, center=True, scale=scale_bn,
+                                 epsilon=epsilon_bn, activation_fn=None, is_training=is_training)
+
+        activation = tf.nn.elu(feature_map)
+        activation = tf.nn.max_pool(activation, maxpool_ksize, [1, 1, 1, 1], padding='VALID',
+                                    data_format='NHWC', name='maxpool')
+        activation = tf.nn.dropout(activation, keep_prob=keep_prob)
+
+    with tf.variable_scope("output"):
         dim = np.prod(activation.get_shape().as_list()[1:])
         flattened = tf.reshape(activation, [-1, dim])
         weights = weight_variable([dim, 1])

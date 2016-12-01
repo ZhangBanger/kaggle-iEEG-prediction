@@ -25,7 +25,7 @@ CONTINUE = True
 # General HyperParameters
 KEEP_PROB = 0.75
 LEARNING_RATE = 3e-4
-LR_DECAY = 0.99
+LR_DECAY = 0.9
 LR_DECAY_STEPS = 1000
 NUM_EPOCHS = 10
 BATCH_SIZE = 256
@@ -33,6 +33,7 @@ EVAL_BATCH = 1024
 EVAL_EVERY = 100
 READ_THREADS = 8
 WINDOW_SIZE = 1000
+POSITIVE_WEIGHT = 3.
 
 # Convolutional HyperParameters
 CHANNELS = 16
@@ -125,7 +126,7 @@ def inference(x):
 
 def loss(logits, y_):
     cross_entropy = tf.reduce_mean(
-        tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=3.)
+        tf.nn.weighted_cross_entropy_with_logits(logits, y_, pos_weight=POSITIVE_WEIGHT)
     )
 
     # Include batch norm as dependency so parameters can update
@@ -159,7 +160,7 @@ def evaluation(logits, labels):
     return accuracy, auc, update_auc
 
 
-def train():
+def train_model():
     input_folder = os.path.join(DATA_ROOT, PREPROCESSED_DIR)
     # Set up training pipeline
     valid_predictors, valid_label = input_pipeline(
@@ -263,8 +264,7 @@ def predict(output_file, separator=",", mode="w+"):
 if __name__ == "__main__":
     if (len(sys.argv) > 1) and (sys.argv[1] in ("p", "predict")):
         outfile = "prediction.csv"
-        print("Writing predictions to file", outfile)
         predict(outfile, mode="w+")
     else:
         print("training")
-        train()
+        train_model()

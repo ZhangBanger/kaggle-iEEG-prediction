@@ -62,6 +62,29 @@ def from_example_proto(serialized_example, shape):
     return x, label
 
 
+def generate_test_segment(data_root, test_folder="test"):
+    """
+        Emit preprocessed segment along with filename
+        Already chopped up and ready to send windows into feed dict
+    """
+    test_path = os.path.join(data_root, test_folder)
+    file_names = filter(lambda x: x.endswith(".mat"), os.listdir(test_path))
+
+    for file_name in file_names:
+        file_path = os.path.join(test_path, file_name)
+        data = mat_to_data(file_path)
+        segment = data["data"]
+
+        segment = normalize(segment)
+
+        if SUBSAMPLE:
+            segment = subsample(segment, channels=CHANNELS, rate=SUBSAMPLE_RATE)
+
+        num_windows = segment.shape[0] // WINDOW_SIZE
+        segment = np.reshape(segment, (num_windows, WINDOW_SIZE, CHANNELS))
+        yield segment, file_name
+
+
 def subsample_and_serialize(data_root, in_folder, out_folder):
     """Read MatLab files, optionally attenuate and subsample, and write to TFRecords files
 

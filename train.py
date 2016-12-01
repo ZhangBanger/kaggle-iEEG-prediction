@@ -153,12 +153,10 @@ def evaluation(logits, labels):
     predict_floats = tf.round(tf.nn.sigmoid(logits))
     label_floats = tf.cast(labels, tf.float32)
 
-    raw_accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
-    true_positive = predict_floats * label_floats
-    precision = tf.reduce_sum(true_positive) / tf.reduce_sum(predict_floats)
-    recall = tf.reduce_sum(true_positive) / tf.reduce_sum(label_floats)
-    f1 = 2 * (precision * recall) / (precision + recall + 1e-6)
-    return raw_accuracy, precision, recall, f1
+    accuracy = tf.reduce_mean(tf.cast(tf.equal(predict_floats, label_floats), tf.float32))
+    auc = tf.contrib.metrics.streaming_auc(predict_floats, label_floats)
+
+    return accuracy, auc
 
 
 def train():
@@ -179,7 +177,7 @@ def train():
 
     batch_logits = inference(train_predictors)
     batch_loss = loss(batch_logits, train_label)
-    batch_accuracy, batch_precision, batch_recall, batch_f1 = evaluation(batch_logits, train_label)
+    batch_accuracy, batch_auc = evaluation(batch_logits, train_label)
 
     train_step, train_op = optimize(batch_loss)
 
@@ -206,17 +204,16 @@ def train():
     try:
         while not coord.should_stop():
             start_time = time.time()
-            _, step, train_loss, train_acc, train_prec, train_rec, train_f1 = sess.run(
-                [train_op, train_step, batch_loss,
-                 batch_accuracy, batch_precision, batch_recall, batch_f1],
+            _, step, train_loss, train_acc, train_auc = sess.run(
+                [train_op, train_step, batch_loss, batch_accuracy, batch_auc],
                 feed_dict={keep_prob: KEEP_PROB}
             )
             duration = time.time() - start_time
 
             if step % EVAL_EVERY == 0:
                 valid_xs, valid_ys = sess.run([valid_predictors, valid_label])
-                valid_loss, valid_acc, valid_prec, valid_rec, valid_f1 = sess.run(
-                    [batch_loss, batch_accuracy, batch_precision, batch_recall, batch_f1],
+                valid_loss, valid_acc, valid_auc = sess.run(
+                    [batch_loss, batch_accuracy, batch_auc],
                     feed_dict={train_predictors: valid_xs, train_label: valid_ys, keep_prob: 1.}
                 )
                 chkpt_file = os.path.join(
@@ -225,11 +222,11 @@ def train():
                 )
                 saver.save(sess, chkpt_file)
                 print('Step %d (with previous: %d) (%3f sec)' % (step, global_step_offset + step, duration))
-                print('train-loss = %.2f, train-acc = %.3f, train-prec = %.2f, train-rec = %.2f, train-f1 = %.2f' % (
-                    train_loss, train_acc, train_prec, train_rec, train_f1
+                print('train-loss = %.2f, train-acc = %.3f, train-auc = %.2f' % (
+                    train_loss, train_acc, train_auc
                 ))
-                print('valid-loss = %.2f, valid-acc = %.3f, valid-prec = %.2f, valid-rec = %.2f, valid-f1 = %.2f' % (
-                    valid_loss, valid_acc, valid_prec, valid_rec, valid_f1
+                print('valid-loss = %.2f, valid-acc = %.3f, valid-auc = %.2f' % (
+                    valid_loss, valid_acc, valid_auc
                 ))
 
     except tf.errors.OutOfRangeError:

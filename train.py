@@ -20,13 +20,15 @@ MODEL_ID = "eeg-conv"
 MODEL_DIR = os.path.join(DATA_ROOT, "model", MODEL_ID)
 if not os.path.exists(MODEL_DIR):
     os.mkdir(MODEL_DIR)
-CONTINUE = False
+CONTINUE = True
 
 # General HyperParameters
 KEEP_PROB = 0.75
-
+LEARNING_RATE = 3e-4
+LR_DECAY = 0.99
+LR_DECAY_STEPS = 1000
 NUM_EPOCHS = 10
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 EVAL_BATCH = 1024
 EVAL_EVERY = 100
 READ_THREADS = 8
@@ -136,12 +138,14 @@ def loss(logits, y_):
 
 
 def optimize(loss_op):
-    optimizer = tf.train.AdamOptimizer(3e-4)
+    global_step = tf.Variable(0, name='global_step', trainable=False)
+    learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step,
+                                               LR_DECAY_STEPS, LR_DECAY, staircase=True)
+    optimizer = tf.train.AdamOptimizer(learning_rate)
     grads_and_vars = optimizer.compute_gradients(loss_op)
     for grad, trainable_var in grads_and_vars:
         variable_summaries(grad)
         variable_summaries(trainable_var)
-    global_step = tf.Variable(0, name='global_step', trainable=False)
     return global_step, optimizer.apply_gradients(grads_and_vars=grads_and_vars, global_step=global_step)
 
 

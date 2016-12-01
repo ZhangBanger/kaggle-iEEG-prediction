@@ -264,6 +264,10 @@ def train():
     sess.close()
     return
 
+def get_file_name_for_table(ff, mat = True):
+    ff = ff.decode("ascii").split("/")[-1].split(".")[0]
+    return ff + ".mat"
+
 def predict(outfile, SEP="\t", mode = "w+"):
 
     valid_predictors, label_valid, file_valid = validation_input_pipeline(
@@ -303,7 +307,7 @@ def predict(outfile, SEP="\t", mode = "w+"):
                 print("prediction batch %u (%.2f s)" %(step, duration))
                 for ff, logit_ in zip(prediction_file.ravel(), predicted_label.ravel()):
                     probability = 1/(1+np.exp(-logit_))
-                    print(ff.decode("ascii").split("/")[-1], probability,
+                    print(get_file_name_for_table(ff), "%.6f" % probability,
                           file=outfilehandle, sep=SEP)
 
         except tf.errors.OutOfRangeError:

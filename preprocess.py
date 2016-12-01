@@ -63,10 +63,10 @@ def from_example_proto(serialized_example, shape, filename_queue):
     return x, label, filename
 
 
-def write_segments(data_root, indir = "train_1"):
-    raw_folder = os.path.join(data_root, indir)
+def write_segments(data_root, in_folder, out_folder):
+    raw_folder = os.path.join(data_root, in_folder)
     file_names = filter(lambda x: x.endswith(".mat"), os.listdir(raw_folder))
-    preprocessed_dir = os.path.join(data_root, "preprocessed")
+    preprocessed_dir = os.path.join(data_root, out_folder)
 
     if not os.path.exists(preprocessed_dir):
         os.mkdir(preprocessed_dir)
@@ -112,5 +112,8 @@ def write_segments(data_root, indir = "train_1"):
 
 
 if __name__ == '__main__':
-    data_dir = os.path.expanduser("~/data/seizure-prediction")
-    write_segments(data_dir)
+    write_segments(
+        data_root=os.path.expanduser("~/data/seizure-prediction"),
+        in_folder="raw",
+        out_folder="preprocessed",
+    )

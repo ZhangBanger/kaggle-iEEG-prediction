@@ -49,6 +49,7 @@ def read_and_decode(filename_queue, shape):
     _, serialized_example = reader.read(filename_queue)
     example, label, filename = from_example_proto(serialized_example, shape=shape, filename_queue=filename_queue)
 
+    filename  = filename_queue.dequeue()
     #filename_hash = [int(x) for x in str(filename).split('.')[0].split('_')]
     #if len(filename_hash) ==2:
     #    filename_hash.append(2)
@@ -87,6 +88,8 @@ def validation_input_pipeline(data_dir, batch_size, read_threads, train=False):
         )
     )
     num_epochs = NUM_EPOCHS if train else None
+    #print(*filename_list[:10], sep="\n")
+    #print(*filename_list[-10:], sep="\n")
     filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
     shape = (WINDOW_SIZE, CHANNELS)
     example_list = []
@@ -300,7 +303,8 @@ def predict(outfile, SEP="\t", mode = "w+"):
                 print("prediction batch %u (%.2f s)" %(step, duration))
                 for ff, logit_ in zip(prediction_file.ravel(), predicted_label.ravel()):
                     probability = 1/(1+np.exp(-logit_))
-                    print(ff, probability, file=outfilehandle, sep=SEP)
+                    print(ff.decode("ascii").split("/")[-1], probability,
+                          file=outfilehandle, sep=SEP)
 
         except tf.errors.OutOfRangeError:
             print('Done training for %d epochs, %d steps.' % (NUM_EPOCHS, step))

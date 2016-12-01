@@ -59,6 +59,7 @@ def from_example_proto(serialized_example, shape, filename_queue):
     x = tf.reshape(features['data'], shape)
     label = features['label']
     filename = np.array([42])
+
     return x, label, filename
 
 
